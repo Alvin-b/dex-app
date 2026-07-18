@@ -1,0 +1,6 @@
+{
+  "name": "DEXCARGO Ops",
+  "description": "Enterprise cargo logistics operations platform for East Africa cargo hubs. Handles role-based intake, payments, collections, commissions, and admin controls.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
