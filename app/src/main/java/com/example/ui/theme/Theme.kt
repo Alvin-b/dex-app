@@ -7,7 +7,7 @@ import androidx.compose.ui.graphics.Color
 
 import androidx.compose.material3.lightColorScheme
 
-private val DarkColorScheme = lightColorScheme(
+private val DarkColorScheme = darkColorScheme(
     primary = OrangeAccent,
     secondary = BlueAccent,
     tertiary = GreenAccent,
@@ -15,7 +15,7 @@ private val DarkColorScheme = lightColorScheme(
     surface = DarkSurface,
     surfaceVariant = DarkSurfaceVariant,
     error = RedAccent,
-    onPrimary = Color.White,
+    onPrimary = Color.Black,
     onSecondary = Color.White,
     onTertiary = TextPrimary,
     onBackground = TextPrimary,

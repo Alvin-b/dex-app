@@ -272,32 +272,84 @@ fun SectionTitle(text: String, actionText: String? = null, onActionClick: (() ->
     }
 }
 
+fun generateLocalSimulatedPackageBitmap(id: String): android.graphics.Bitmap {
+    val width = 400
+    val height = 300
+    val bitmap = android.graphics.Bitmap.createBitmap(width, height, android.graphics.Bitmap.Config.ARGB_8888)
+    val canvas = android.graphics.Canvas(bitmap)
+    
+    // Background Slate
+    val bgPaint = android.graphics.Paint().apply {
+        color = android.graphics.Color.parseColor("#0F1424")
+    }
+    canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), bgPaint)
+    
+    // Package cardboard box outline
+    val boxPaint = android.graphics.Paint().apply {
+        color = android.graphics.Color.parseColor("#C68B59")
+        style = android.graphics.Paint.Style.FILL
+    }
+    canvas.drawRoundRect(80f, 60f, 320f, 240f, 16f, 16f, boxPaint)
+    
+    // Tape line
+    val tapePaint = android.graphics.Paint().apply {
+        color = android.graphics.Color.parseColor("#FF9800")
+        strokeWidth = 14f
+    }
+    canvas.drawLine(80f, 150f, 320f, 150f, tapePaint)
+    
+    // Shipping Label on the box
+    val labelPaint = android.graphics.Paint().apply {
+        color = android.graphics.Color.WHITE
+    }
+    canvas.drawRect(120f, 80f, 280f, 135f, labelPaint)
+    
+    // Text on label
+    val textPaint = android.graphics.Paint().apply {
+        color = android.graphics.Color.BLACK
+        textSize = 13f
+        isAntiAlias = true
+    }
+    canvas.drawText("DEX CARGO", 140f, 100f, textPaint)
+    
+    val smallTextPaint = android.graphics.Paint().apply {
+        color = android.graphics.Color.DKGRAY
+        textSize = 10f
+        isAntiAlias = true
+    }
+    canvas.drawText("ID: $id", 130f, 120f, smallTextPaint)
+    
+    return bitmap
+}
+
 @Composable
 fun CargoThumbnail(
     pkg: CargoPackage,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier.size(52.dp)
+    modifier: Modifier = Modifier.size(52.dp),
+    allowExpand: Boolean = false
 ) {
     var isExpanded by remember { mutableStateOf(false) }
-
-    val bitmap = remember(pkg.packagePhotoUrl) {
-        if (pkg.packagePhotoUrl.isNullOrBlank() || pkg.packagePhotoUrl == "simulated_url") null
-        else {
+ 
+    val bitmap = remember(pkg.packagePhotoUrl, pkg.id) {
+        if (!pkg.packagePhotoUrl.isNullOrBlank() && pkg.packagePhotoUrl != "simulated_url") {
             try {
                 val decodedBytes = android.util.Base64.decode(pkg.packagePhotoUrl, android.util.Base64.DEFAULT)
                 android.graphics.BitmapFactory.decodeByteArray(decodedBytes, 0, decodedBytes.size)
             } catch (e: Exception) {
-                null
+                generateLocalSimulatedPackageBitmap(pkg.id)
             }
+        } else {
+            generateLocalSimulatedPackageBitmap(pkg.id)
         }
     }
-
+ 
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(8.dp))
             .border(1.dp, DarkBorder, RoundedCornerShape(8.dp))
             .clickable {
-                if (bitmap != null) {
+                if (allowExpand) {
                     isExpanded = true
                 } else {
                     onClick()
@@ -305,7 +357,7 @@ fun CargoThumbnail(
             },
         contentAlignment = Alignment.Center
     ) {
-        if (bitmap != null) {
+        if (bitmap != null && (!pkg.packagePhotoUrl.isNullOrBlank() && pkg.packagePhotoUrl != "simulated_url")) {
             Image(
                 bitmap = bitmap.asImageBitmap(),
                 contentDescription = "Package Photo",
@@ -318,21 +370,21 @@ fun CargoThumbnail(
             Canvas(modifier = Modifier.fillMaxSize()) {
                 // Draw background
                 drawRect(color = DarkSurfaceVariant)
-
+ 
                 // Draw box outlines (simulated cargo package)
                 val center = Offset(size.width / 2, size.height / 2)
                 val boxWidth = size.width * 0.5f
                 val boxHeight = size.height * 0.45f
                 val rectX = center.x - boxWidth / 2
                 val rectY = center.y - boxHeight / 2
-
+ 
                 drawRect(
                     color = strokeColor,
                     topLeft = Offset(rectX, rectY),
                     size = Size(boxWidth, boxHeight),
                     style = Stroke(width = 1.5.dp.toPx())
                 )
-
+ 
                 // Draw box tape or labels
                 drawLine(
                     color = accentColor,
@@ -343,7 +395,7 @@ fun CargoThumbnail(
             }
         }
     }
-
+ 
     // EXPANDED PHOTO DIALOG
     if (isExpanded && bitmap != null) {
         Dialog(
@@ -365,7 +417,7 @@ fun CargoThumbnail(
                     modifier = Modifier.fillMaxSize(),
                     contentScale = ContentScale.Fit
                 )
-
+ 
                 // Floating close indicator
                 Box(
                     modifier = Modifier

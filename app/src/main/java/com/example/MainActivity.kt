@@ -144,9 +144,9 @@ fun DexBottomNavBar(currentScreen: Screen, onTabClick: (String) -> Unit) {
                 currentScreen is Screen.AdminHome
 
         val navItemColors = NavigationBarItemDefaults.colors(
-            selectedIconColor = Color(0xFF111F0D),
-            selectedTextColor = Color(0xFF111F0D),
-            indicatorColor = OrangeAccentBg,
+            selectedIconColor = OrangeAccent,
+            selectedTextColor = OrangeAccent,
+            indicatorColor = OrangeAccentBg.copy(alpha = 0.5f),
             unselectedIconColor = TextSecondary,
             unselectedTextColor = TextSecondary
         )
@@ -161,8 +161,8 @@ fun DexBottomNavBar(currentScreen: Screen, onTabClick: (String) -> Unit) {
         NavigationBarItem(
             selected = currentScreen is Screen.ScanSticker || currentScreen is Screen.OcrProcessing || currentScreen is Screen.OcrReview || currentScreen is Screen.TakePackagePhoto,
             onClick = { onTabClick("scan") },
-            icon = { Icon(Icons.Default.QrCodeScanner, "Scan") },
-            label = { Text("Scan Sticker", fontSize = 10.sp) },
+            icon = { Icon(Icons.Default.QrCodeScanner, "Register") },
+            label = { Text("Register", fontSize = 10.sp) },
             colors = navItemColors
         )
         NavigationBarItem(

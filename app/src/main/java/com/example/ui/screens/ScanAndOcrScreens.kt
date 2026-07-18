@@ -55,6 +55,7 @@ import kotlinx.coroutines.delay
 fun ScanStickerScreen(viewModel: DexcargoViewModel) {
     val selectedLabelId by viewModel.selectedLabelId.collectAsState()
     val context = LocalContext.current
+    var selectedModeTab by remember { mutableStateOf(0) } // 0 = Automated OCR, 1 = Manual Form
 
     val cameraLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.TakePicturePreview()
@@ -82,355 +83,392 @@ fun ScanStickerScreen(viewModel: DexcargoViewModel) {
             .background(DarkBg)
     ) {
         ScreenHeader(
-            title = "Sticker Photo Capture",
+            title = "Register",
             onBack = { viewModel.navigateBack() }
         )
 
-        // VIEWPORT VIEWFINDER BOX (Drawn beautifully on Canvas)
-        Box(
+        // Custom Mode Tabs
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(230.dp)
-                .padding(horizontal = 16.dp, vertical = 8.dp)
-                .clip(RoundedCornerShape(18.dp))
-                .background(Color(0xFF0A101C))
-                .border(1.dp, DarkBorder, RoundedCornerShape(18.dp)),
-            contentAlignment = Alignment.Center
+                .padding(horizontal = 16.dp, vertical = 10.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(DarkSurface)
+                .border(1.dp, DarkBorder, RoundedCornerShape(12.dp))
+                .padding(4.dp)
         ) {
-            // Simulated laser line scanning
-            val infiniteTransition = rememberInfiniteTransition(label = "laser")
-            val laserY by infiniteTransition.animateFloat(
-                initialValue = 0.15f,
-                targetValue = 0.85f,
-                animationSpec = infiniteRepeatable(
-                    animation = tween(2200, easing = EaseInOut),
-                    repeatMode = RepeatMode.Reverse
-                ),
-                label = "laserY"
-            )
-
-            Canvas(modifier = Modifier.fillMaxSize()) {
-                // Draw camera grid
-                val cols = 4
-                val rows = 3
-                val cellW = size.width / cols
-                val cellH = size.height / rows
-                for (i in 1 until cols) {
-                    drawLine(
-                        color = Color.White.copy(alpha = 0.05f),
-                        start = Offset(cellW * i, 0f),
-                        end = Offset(cellW * i, size.height),
-                        strokeWidth = 1f
-                    )
-                }
-                for (i in 1 until rows) {
-                    drawLine(
-                        color = Color.White.copy(alpha = 0.05f),
-                        start = Offset(0f, cellH * i),
-                        end = Offset(size.width, cellH * i),
-                        strokeWidth = 1f
-                    )
-                }
-
-                // Laser scan line
-                drawLine(
-                    color = OrangeAccent,
-                    start = Offset(size.width * 0.1f, size.height * laserY),
-                    end = Offset(size.width * 0.9f, size.height * laserY),
-                    strokeWidth = 3.dp.toPx()
-                )
-            }
-
-            // INNER PAPER STICKER GRAPHIC
             Box(
                 modifier = Modifier
-                    .size(width = 230.dp, height = 145.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(Color(0xFFF4F6FB))
-                    .border(2.dp, OrangeAccent.copy(alpha = 0.8f), RoundedCornerShape(10.dp))
-                    .padding(12.dp)
+                    .weight(1f)
+                    .clip(RoundedCornerShape(9.dp))
+                    .background(if (selectedModeTab == 0) OrangeAccent else Color.Transparent)
+                    .clickable { selectedModeTab = 0 }
+                    .padding(vertical = 10.dp),
+                contentAlignment = Alignment.Center
             ) {
-                Column(verticalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxSize()) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = if (selectedLabelId == 1) "HKG-NBO" else "CAN-NBO",
-                            color = Color(0xFF0A0B14),
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.ExtraBold
-                        )
-                        Text(
-                            text = "OCR PHOTO",
-                            color = BlueAccent,
-                            fontSize = 8.sp,
-                            fontWeight = FontWeight.Bold,
-                            fontFamily = FontFamily.Monospace
-                        )
-                    }
-
-                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        StickerRow(lbl = "Tracking", valStr = if (selectedLabelId == 1) "1260707534987" else "126070655250")
-                        StickerRow(lbl = "Consignee", valStr = if (selectedLabelId == 1) "Beatrice Wangui" else "Charles Ombongi")
-                        StickerRow(lbl = "Route", valStr = if (selectedLabelId == 1) "HKG to NBO" else "CAN to NBO")
-                        StickerRow(lbl = "Weight", valStr = if (selectedLabelId == 1) "1.0 kg / 1 PCS" else "0.5 kg / 1 PCS")
-                    }
-
-                    // Barcode lines
-                    Canvas(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(18.dp)
-                    ) {
-                        val pathEffect = PathEffect.dashPathEffect(floatArrayOf(3f, 4f, 6f, 3f), 0f)
-                        drawRoundRect(
-                            color = Color(0xFF0A0B14).copy(alpha = 0.18f),
-                            size = size,
-                            style = Stroke(width = size.height, pathEffect = pathEffect)
-                        )
-                    }
-                }
+                Text(
+                    text = "🤖 Automated Scan",
+                    color = if (selectedModeTab == 0) Color(0xFF1A1200) else TextSecondary,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 12.sp
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(9.dp))
+                    .background(if (selectedModeTab == 1) OrangeAccent else Color.Transparent)
+                    .clickable { selectedModeTab = 1 }
+                    .padding(vertical = 10.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "📋 Manual Form",
+                    color = if (selectedModeTab == 1) Color(0xFF1A1200) else TextSecondary,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 12.sp
+                )
             }
         }
 
         Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(bottom = 24.dp)
         ) {
-            Text(
-                text = "Take a clear photo of the full package sticker. OCR will extract the shipment details.",
-                color = TextSecondary,
-                fontSize = 11.sp,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth()
-            )
+            if (selectedModeTab == 0) {
+                // VIEWPORT VIEWFINDER BOX (Drawn beautifully on Canvas)
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(230.dp)
+                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(Color(0xFF0A101C))
+                        .border(1.dp, DarkBorder, RoundedCornerShape(18.dp)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    // Simulated laser line scanning
+                    val infiniteTransition = rememberInfiniteTransition(label = "laser")
+                    val laserY by infiniteTransition.animateFloat(
+                        initialValue = 0.15f,
+                        targetValue = 0.85f,
+                        animationSpec = infiniteRepeatable(
+                            animation = tween(2200, easing = EaseInOut),
+                            repeatMode = RepeatMode.Reverse
+                        ),
+                        label = "laserY"
+                    )
 
-            // ACTIVE SELECTOR INFO
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(DarkSurface)
-                    .border(1.dp, DarkBorder, RoundedCornerShape(10.dp))
-                    .padding(10.dp)
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(
-                        text = "STICKER PHOTO OCR CONTROLS",
-                        color = OrangeAccent,
-                        fontSize = 9.5.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        text = "Real camera captures stickers and processes them via Gemini OCR. You can also simulate the captured sticker scan.",
-                        color = TextSecondary,
-                        fontSize = 10.sp,
-                        textAlign = TextAlign.Center
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        DexButton(
-                            text = "📸 Real Camera",
-                            onClick = {
-                                permissionLauncher.launch(android.Manifest.permission.CAMERA)
-                            },
-                            style = OrangeAccent,
-                            textColor = Color(0xFF1A1200),
-                            modifier = Modifier.weight(1.0f)
-                        )
-                        DexButton(
-                            text = "⚡ Simulation",
-                            onClick = { viewModel.triggerOcrScan(null) },
-                            style = DarkSurfaceVariant,
-                            textColor = TextPrimary,
-                            modifier = Modifier.weight(1.0f)
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        // Draw camera grid
+                        val cols = 4
+                        val rows = 3
+                        val cellW = size.width / cols
+                        val cellH = size.height / rows
+                        for (i in 1 until cols) {
+                            drawLine(
+                                color = Color.White.copy(alpha = 0.05f),
+                                start = Offset(cellW * i, 0f),
+                                end = Offset(cellW * i, size.height),
+                                strokeWidth = 1f
+                            )
+                        }
+                        for (i in 1 until rows) {
+                            drawLine(
+                                color = Color.White.copy(alpha = 0.05f),
+                                start = Offset(0f, cellH * i),
+                                end = Offset(size.width, cellH * i),
+                                strokeWidth = 1f
+                            )
+                        }
+
+                        // Laser scan line
+                        drawLine(
+                            color = OrangeAccent,
+                            start = Offset(size.width * 0.1f, size.height * laserY),
+                            end = Offset(size.width * 0.9f, size.height * laserY),
+                            strokeWidth = 3.dp.toPx()
                         )
                     }
+
+                    // INNER PAPER STICKER GRAPHIC
+                    Box(
+                        modifier = Modifier
+                            .size(width = 230.dp, height = 145.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Color(0xFFF4F6FB))
+                            .border(2.dp, OrangeAccent.copy(alpha = 0.8f), RoundedCornerShape(10.dp))
+                            .padding(12.dp)
+                    ) {
+                        Column(verticalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxSize()) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = if (selectedLabelId == 1) "HKG-NBO" else "CAN-NBO",
+                                    color = Color(0xFF0A0B14),
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.ExtraBold
+                                )
+                                Text(
+                                    text = "OCR PHOTO",
+                                    color = BlueAccent,
+                                    fontSize = 8.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+
+                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                StickerRow(lbl = "Tracking", valStr = if (selectedLabelId == 1) "1260707534987" else "126070655250")
+                                StickerRow(lbl = "Consignee", valStr = if (selectedLabelId == 1) "Beatrice Wangui" else "Charles Ombongi")
+                                StickerRow(lbl = "Route", valStr = if (selectedLabelId == 1) "HKG to NBO" else "CAN to NBO")
+                                StickerRow(lbl = "Weight", valStr = if (selectedLabelId == 1) "1.0 kg / 1 PCS" else "0.5 kg / 1 PCS")
+                            }
+
+                            // Barcode lines
+                            Canvas(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(18.dp)
+                            ) {
+                                val pathEffect = PathEffect.dashPathEffect(floatArrayOf(3f, 4f, 6f, 3f), 0f)
+                                drawRoundRect(
+                                    color = Color(0xFF0A0B14).copy(alpha = 0.18f),
+                                    size = size,
+                                    style = Stroke(width = size.height, pathEffect = pathEffect)
+                                )
+                            }
+                        }
+                    }
                 }
-            }
 
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Divider(modifier = Modifier.weight(1f), color = DarkBorder)
-                Text(
-                    "or manual registry",
-                    color = TextMuted,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(horizontal = 10.dp)
-                )
-                Divider(modifier = Modifier.weight(1f), color = DarkBorder)
-            }
-
-            // MANUAL ENTRY BOX
-            val manualId = remember { mutableStateOf("") }
-            val manualName = remember { mutableStateOf("") }
-            val manualPhone = remember { mutableStateOf("") }
-            val manualCost = remember { mutableStateOf("3000") }
-            val manualMode = remember { mutableStateOf("Sea Freight") }
-            var expandedDropdown by remember { mutableStateOf(false) }
-
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(DarkSurface)
-                    .border(1.dp, DarkBorder, RoundedCornerShape(14.dp))
-                    .padding(14.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                Text(
-                    text = "📋 Manual Cargo Registry",
-                    color = OrangeAccent,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Bold
-                )
-
-                DexTextField(
-                    value = manualId.value,
-                    onValueChange = { manualId.value = it },
-                    label = "Tracking Number (AFA ID)",
-                    placeholder = "e.g. 1260707534987"
-                )
-
-                DexTextField(
-                    value = manualName.value,
-                    onValueChange = { manualName.value = it },
-                    label = "Consignee / Client Name",
-                    placeholder = "e.g. Mary Atieno"
-                )
-
-                DexTextField(
-                    value = manualPhone.value,
-                    onValueChange = { manualPhone.value = it },
-                    label = "Client Phone Number",
-                    placeholder = "e.g. 0712345678"
-                )
-
-                DexTextField(
-                    value = manualCost.value,
-                    onValueChange = { manualCost.value = it },
-                    label = "Total Price (KES)",
-                    placeholder = "e.g. 3000"
-                )
-
-                // FREIGHT MODE DROPDOWN
-                Column(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
                     Text(
-                        text = "MODE OF FREIGHT",
+                        text = "Take a clear photo of the full package sticker. OCR will extract the shipment details.",
                         color = TextSecondary,
-                        fontSize = 9.5.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(bottom = 4.dp)
+                        fontSize = 11.sp,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
                     )
+
+                    // ACTIVE SELECTOR INFO
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(10.dp))
-                            .background(DarkSurfaceVariant)
+                            .background(DarkSurface)
                             .border(1.dp, DarkBorder, RoundedCornerShape(10.dp))
-                            .clickable { expandedDropdown = true }
-                            .padding(horizontal = 12.dp, vertical = 14.dp)
+                            .padding(10.dp)
                     ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(manualMode.value, color = TextPrimary, fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
-                            Icon(
-                                imageVector = Icons.Default.ArrowDropDown,
-                                contentDescription = "Dropdown Arrow",
-                                tint = TextSecondary
+                        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(
+                                text = "STICKER PHOTO OCR CONTROLS",
+                                color = OrangeAccent,
+                                fontSize = 9.5.sp,
+                                fontWeight = FontWeight.Bold
                             )
-                        }
-                        DropdownMenu(
-                            expanded = expandedDropdown,
-                            onDismissRequest = { expandedDropdown = false },
-                            modifier = Modifier.background(DarkSurfaceVariant)
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text("Sea Freight", color = TextPrimary) },
-                                onClick = {
-                                    manualMode.value = "Sea Freight"
-                                    expandedDropdown = false
-                                }
+                            Text(
+                                text = "Real camera captures stickers and processes them via Gemini OCR. You can also simulate the captured sticker scan.",
+                                color = TextSecondary,
+                                fontSize = 10.sp,
+                                textAlign = TextAlign.Center
                             )
-                            DropdownMenuItem(
-                                text = { Text("Air Freight", color = TextPrimary) },
-                                onClick = {
-                                    manualMode.value = "Air Freight"
-                                    expandedDropdown = false
-                                }
-                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                DexButton(
+                                    text = "📸 Real Camera",
+                                    onClick = {
+                                        permissionLauncher.launch(android.Manifest.permission.CAMERA)
+                                    },
+                                    style = OrangeAccent,
+                                    textColor = Color(0xFF1A1200),
+                                    modifier = Modifier.weight(1.0f)
+                                )
+                                DexButton(
+                                    text = "⚡ Simulation",
+                                    onClick = { viewModel.triggerOcrScan(null) },
+                                    style = DarkSurfaceVariant,
+                                    textColor = TextPrimary,
+                                    modifier = Modifier.weight(1.0f)
+                                )
+                            }
                         }
                     }
                 }
+            } else {
+                // MANUAL ENTRY BOX
+                val manualId = remember { mutableStateOf("1260707534987") }
+                val manualName = remember { mutableStateOf("Beatrice-Pheobe Wangui") }
+                val manualPhone = remember { mutableStateOf("0712345678") }
+                val manualCost = remember { mutableStateOf("3000") }
+                val manualMode = remember { mutableStateOf("Sea Freight") }
+                var expandedDropdown by remember { mutableStateOf(false) }
 
-                Spacer(modifier = Modifier.height(4.dp))
-
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    modifier = Modifier.fillMaxWidth()
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(DarkSurface)
+                        .border(1.dp, DarkBorder, RoundedCornerShape(14.dp))
+                        .padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Button(
-                        onClick = {
-                            if (manualId.value.isBlank()) {
-                                Toast.makeText(context, "Please enter a Tracking Number.", Toast.LENGTH_SHORT).show()
-                                return@Button
+                    Text(
+                        text = "📋 Manual Cargo Registry",
+                        color = OrangeAccent,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    DexTextField(
+                        value = manualId.value,
+                        onValueChange = { manualId.value = it },
+                        label = "Tracking Number (AFA ID)",
+                        placeholder = "e.g. 1260707534987"
+                    )
+
+                    DexTextField(
+                        value = manualName.value,
+                        onValueChange = { manualName.value = it },
+                        label = "Consignee / Client Name",
+                        placeholder = "e.g. Mary Atieno"
+                    )
+
+                    DexTextField(
+                        value = manualPhone.value,
+                        onValueChange = { manualPhone.value = it },
+                        label = "Client Phone Number",
+                        placeholder = "e.g. 0712345678"
+                    )
+
+                    DexTextField(
+                        value = manualCost.value,
+                        onValueChange = { manualCost.value = it },
+                        label = "Total Price (KES)",
+                        placeholder = "e.g. 3000"
+                    )
+
+                    // FREIGHT MODE DROPDOWN
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            text = "MODE OF FREIGHT",
+                            color = TextSecondary,
+                            fontSize = 9.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(bottom = 4.dp)
+                        )
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(DarkSurfaceVariant)
+                                .border(1.dp, DarkBorder, RoundedCornerShape(10.dp))
+                                .clickable { expandedDropdown = true }
+                                .padding(horizontal = 12.dp, vertical = 14.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(manualMode.value, color = TextPrimary, fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
+                                Icon(
+                                    imageVector = Icons.Default.ArrowDropDown,
+                                    contentDescription = "Dropdown Arrow",
+                                    tint = TextSecondary
+                                )
                             }
-                            // Prefill review variables in VM
-                            viewModel.revId.value = manualId.value
-                            viewModel.revName.value = manualName.value
-                            viewModel.revPhone.value = manualPhone.value
-                            viewModel.revOrigin.value = "Guangzhou (CAN)"
-                            viewModel.revDest.value = "Nairobi (NBO)"
-                            viewModel.revDesc.value = "General Goods"
-                            viewModel.revMode.value = manualMode.value
-                            viewModel.revWeight.value = "1.0"
-                            viewModel.revPcs.value = "1"
-                            viewModel.revCost.value = manualCost.value
-
-                            // Reset photo states
-                            viewModel.isPackagePhotoCaptured.value = false
-                            viewModel.capturedPackageBitmap.value = null
-                            viewModel.capturedPhotoUrl.value = ""
-
-                            // Move directly to TakePackagePhoto screen
-                            viewModel.navigateTo(Screen.TakePackagePhoto)
-                        },
-                        modifier = Modifier.weight(1.2f),
-                        colors = ButtonDefaults.buttonColors(containerColor = OrangeAccent),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Text("📷 Next: Take Photo", color = Color(0xFF1A1200), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            DropdownMenu(
+                                expanded = expandedDropdown,
+                                onDismissRequest = { expandedDropdown = false },
+                                modifier = Modifier.background(DarkSurfaceVariant)
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("Sea Freight", color = TextPrimary) },
+                                    onClick = {
+                                        manualMode.value = "Sea Freight"
+                                        expandedDropdown = false
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Air Freight", color = TextPrimary) },
+                                    onClick = {
+                                        manualMode.value = "Air Freight"
+                                        expandedDropdown = false
+                                    }
+                                )
+                            }
+                        }
                     }
 
-                    Button(
-                        onClick = {
-                            if (manualId.value.isNotBlank()) {
-                                viewModel.selectedPackageId.value = manualId.value
-                                viewModel.navigateTo(Screen.PackageDetails)
-                            } else {
-                                Toast.makeText(context, "Please enter a Tracking Number to search.", Toast.LENGTH_SHORT).show()
-                            }
-                        },
-                        modifier = Modifier.weight(0.8f),
-                        colors = ButtonDefaults.buttonColors(containerColor = BlueAccent),
-                        shape = RoundedCornerShape(12.dp)
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text("🔍 Find", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        Button(
+                            onClick = {
+                                if (manualId.value.isBlank()) {
+                                    Toast.makeText(context, "Please enter a Tracking Number.", Toast.LENGTH_SHORT).show()
+                                    return@Button
+                                }
+                                // Prefill review variables in VM
+                                viewModel.revId.value = manualId.value
+                                viewModel.revName.value = manualName.value
+                                viewModel.revPhone.value = manualPhone.value
+                                viewModel.revOrigin.value = "Guangzhou (CAN)"
+                                viewModel.revDest.value = "Nairobi (NBO)"
+                                viewModel.revDesc.value = "General Goods"
+                                viewModel.revMode.value = manualMode.value
+                                viewModel.revWeight.value = "1.0"
+                                viewModel.revPcs.value = "1"
+                                viewModel.revCost.value = manualCost.value
+
+                                // Reset photo states
+                                viewModel.isPackagePhotoCaptured.value = false
+                                viewModel.capturedPackageBitmap.value = null
+                                viewModel.capturedPhotoUrl.value = ""
+
+                                // Move directly to TakePackagePhoto screen
+                                viewModel.navigateTo(Screen.TakePackagePhoto)
+                            },
+                            modifier = Modifier.weight(1.2f),
+                            colors = ButtonDefaults.buttonColors(containerColor = OrangeAccent),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text("📷 Next: Take Photo", color = Color(0xFF1A1200), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+
+                        Button(
+                            onClick = {
+                                if (manualId.value.isNotBlank()) {
+                                    viewModel.selectedPackageId.value = manualId.value
+                                    viewModel.navigateTo(Screen.PackageDetails)
+                                } else {
+                                    Toast.makeText(context, "Please enter a Tracking Number to search.", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            modifier = Modifier.weight(0.8f),
+                            colors = ButtonDefaults.buttonColors(containerColor = BlueAccent),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text("🔍 Find", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
             }

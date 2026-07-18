@@ -217,7 +217,8 @@ fun PackageDetailsScreen(viewModel: DexcargoViewModel) {
                         onClick = {},
                         modifier = Modifier
                             .size(110.dp)
-                            .clip(RoundedCornerShape(10.dp))
+                            .clip(RoundedCornerShape(10.dp)),
+                        allowExpand = true
                     )
 
                     Column(
@@ -664,6 +665,20 @@ fun PaymentSuccessScreen(viewModel: DexcargoViewModel) {
         }
 
         Spacer(modifier = Modifier.weight(1f))
+
+        DexButton(
+            text = "📦 Proceed to Identity Verification & Handover",
+            onClick = {
+                viewModel.verNationalId.value = ""
+                viewModel.verCollectorName.value = ""
+                viewModel.verCollectorPhone.value = pkg?.phone ?: ""
+                viewModel.navigateTo(Screen.CustomerVerification)
+            },
+            style = GreenAccent,
+            textColor = Color(0xFF042F1F)
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
 
         DexButton(
             text = "Back to Package Details",
