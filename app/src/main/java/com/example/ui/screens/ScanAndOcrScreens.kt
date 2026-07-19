@@ -310,10 +310,10 @@ fun ScanStickerScreen(viewModel: DexcargoViewModel) {
                 }
             } else {
                 // MANUAL ENTRY BOX
-                val manualId = remember { mutableStateOf("1260707534987") }
-                val manualName = remember { mutableStateOf("Beatrice-Pheobe Wangui") }
-                val manualPhone = remember { mutableStateOf("0712345678") }
-                val manualCost = remember { mutableStateOf("3000") }
+                val manualId = remember { mutableStateOf("") }
+                val manualName = remember { mutableStateOf("") }
+                val manualPhone = remember { mutableStateOf("") }
+                val manualCost = remember { mutableStateOf("") }
                 val manualMode = remember { mutableStateOf("Sea Freight") }
                 var expandedDropdown by remember { mutableStateOf(false) }
 
@@ -417,58 +417,37 @@ fun ScanStickerScreen(viewModel: DexcargoViewModel) {
 
                     Spacer(modifier = Modifier.height(4.dp))
 
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        modifier = Modifier.fillMaxWidth()
+                    Button(
+                        onClick = {
+                            if (manualId.value.isBlank()) {
+                                Toast.makeText(context, "Please enter a Tracking Number.", Toast.LENGTH_SHORT).show()
+                                return@Button
+                            }
+                            // Prefill review variables in VM
+                            viewModel.revId.value = manualId.value
+                            viewModel.revName.value = manualName.value
+                            viewModel.revPhone.value = manualPhone.value
+                            viewModel.revOrigin.value = "Guangzhou (CAN)"
+                            viewModel.revDest.value = "Nairobi (NBO)"
+                            viewModel.revDesc.value = "General Goods"
+                            viewModel.revMode.value = manualMode.value
+                            viewModel.revWeight.value = "1.0"
+                            viewModel.revPcs.value = "1"
+                            viewModel.revCost.value = manualCost.value
+
+                            // Reset photo states
+                            viewModel.isPackagePhotoCaptured.value = false
+                            viewModel.capturedPackageBitmap.value = null
+                            viewModel.capturedPhotoUrl.value = ""
+
+                            // Move directly to TakePackagePhoto screen
+                            viewModel.navigateTo(Screen.TakePackagePhoto)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = OrangeAccent),
+                        shape = RoundedCornerShape(12.dp)
                     ) {
-                        Button(
-                            onClick = {
-                                if (manualId.value.isBlank()) {
-                                    Toast.makeText(context, "Please enter a Tracking Number.", Toast.LENGTH_SHORT).show()
-                                    return@Button
-                                }
-                                // Prefill review variables in VM
-                                viewModel.revId.value = manualId.value
-                                viewModel.revName.value = manualName.value
-                                viewModel.revPhone.value = manualPhone.value
-                                viewModel.revOrigin.value = "Guangzhou (CAN)"
-                                viewModel.revDest.value = "Nairobi (NBO)"
-                                viewModel.revDesc.value = "General Goods"
-                                viewModel.revMode.value = manualMode.value
-                                viewModel.revWeight.value = "1.0"
-                                viewModel.revPcs.value = "1"
-                                viewModel.revCost.value = manualCost.value
-
-                                // Reset photo states
-                                viewModel.isPackagePhotoCaptured.value = false
-                                viewModel.capturedPackageBitmap.value = null
-                                viewModel.capturedPhotoUrl.value = ""
-
-                                // Move directly to TakePackagePhoto screen
-                                viewModel.navigateTo(Screen.TakePackagePhoto)
-                            },
-                            modifier = Modifier.weight(1.2f),
-                            colors = ButtonDefaults.buttonColors(containerColor = OrangeAccent),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Text("📷 Next: Take Photo", color = Color(0xFF1A1200), fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                        }
-
-                        Button(
-                            onClick = {
-                                if (manualId.value.isNotBlank()) {
-                                    viewModel.selectedPackageId.value = manualId.value
-                                    viewModel.navigateTo(Screen.PackageDetails)
-                                } else {
-                                    Toast.makeText(context, "Please enter a Tracking Number to search.", Toast.LENGTH_SHORT).show()
-                                }
-                            },
-                            modifier = Modifier.weight(0.8f),
-                            colors = ButtonDefaults.buttonColors(containerColor = BlueAccent),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Text("🔍 Find", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                        }
+                        Text("📷 Next: Take Photo", color = Color(0xFF1A1200), fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -723,6 +702,13 @@ fun TakePackagePhotoScreen(viewModel: DexcargoViewModel) {
             viewModel.isPackagePhotoCaptured.value = true
             viewModel.capturedPhotoUrl.value = viewModel.encodeBitmapToBase64(simBitmap)
             Toast.makeText(context, "Camera permission denied. Using simulated photo.", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    // Automatically trigger the camera on entering the screen
+    LaunchedEffect(Unit) {
+        if (!isCaptured) {
+            permissionLauncher.launch(android.Manifest.permission.CAMERA)
         }
     }
 

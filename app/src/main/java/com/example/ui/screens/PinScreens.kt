@@ -1,5 +1,5 @@
 package com.example.ui.screens
-
+ 
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -25,6 +25,49 @@ import androidx.compose.ui.unit.sp
 import com.example.ui.DexcargoViewModel
 import com.example.ui.components.DexButton
 import com.example.ui.theme.*
+import androidx.biometric.BiometricPrompt
+import androidx.core.content.ContextCompat
+import android.widget.Toast
+import androidx.compose.ui.platform.LocalContext
+
+fun triggerRealBiometric(
+    activity: androidx.fragment.app.FragmentActivity,
+    onSuccess: () -> Unit,
+    onFallback: (String) -> Unit
+) {
+    val executor = ContextCompat.getMainExecutor(activity)
+    val biometricPrompt = BiometricPrompt(
+        activity,
+        executor,
+        object : BiometricPrompt.AuthenticationCallback() {
+            override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                super.onAuthenticationError(errorCode, errString)
+                onFallback(errString.toString())
+            }
+
+            override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                super.onAuthenticationSucceeded(result)
+                onSuccess()
+            }
+
+            override fun onAuthenticationFailed() {
+                super.onAuthenticationFailed()
+            }
+        }
+    )
+
+    val promptInfo = BiometricPrompt.PromptInfo.Builder()
+        .setTitle("DEXCARGO Biometric Sign-In")
+        .setSubtitle("Confirm fingerprint or face scan")
+        .setNegativeButtonText("Use PIN Fallback")
+        .build()
+
+    try {
+        biometricPrompt.authenticate(promptInfo)
+    } catch (e: Exception) {
+        onFallback(e.localizedMessage ?: "Biometric error")
+    }
+}
 
 @Composable
 fun SetPinScreen(viewModel: DexcargoViewModel) {
@@ -241,6 +284,37 @@ fun EnterPinScreen(viewModel: DexcargoViewModel) {
     val quickEmp by viewModel.quickAccessEmployee.collectAsState()
     val enteredPin by viewModel.enteredPin.collectAsState()
     val errorMsg by viewModel.pinErrorMessage.collectAsState()
+    val context = LocalContext.current
+    var showSimulatedBiometricDialog by remember { mutableStateOf(false) }
+
+    // Automatically trigger biometric check on entry as the default action
+    LaunchedEffect(quickEmp) {
+        if (quickEmp?.biometricEnabled == true) {
+            val activity = context as? androidx.fragment.app.FragmentActivity
+            if (activity != null) {
+                triggerRealBiometric(
+                    activity = activity,
+                    onSuccess = {
+                        viewModel.loginWithBiometrics()
+                    },
+                    onFallback = { err ->
+                        // Show simulator if physical scan is not supported (emulator)
+                        if (err.contains("hardware", ignoreCase = true) || 
+                            err.contains("support", ignoreCase = true) || 
+                            err.contains("not recognized", ignoreCase = true) || 
+                            err.contains("not enrolled", ignoreCase = true) ||
+                            err.contains("error", ignoreCase = true)) {
+                            showSimulatedBiometricDialog = true
+                        } else {
+                            Toast.makeText(context, "Biometric fallback: $err", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                )
+            } else {
+                showSimulatedBiometricDialog = true
+            }
+        }
+    }
 
     fun onKeyClick(key: String) {
         if (enteredPin.length < 4) {
@@ -256,6 +330,62 @@ fun EnterPinScreen(viewModel: DexcargoViewModel) {
         if (enteredPin.isNotEmpty()) {
             viewModel.enteredPin.value = enteredPin.dropLast(1)
         }
+    }
+
+    if (showSimulatedBiometricDialog) {
+        AlertDialog(
+            onDismissRequest = { showSimulatedBiometricDialog = false },
+            containerColor = DarkSurface,
+            title = {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Fingerprint,
+                        contentDescription = "Biometric Scan",
+                        tint = BlueAccent,
+                        modifier = Modifier.size(64.dp)
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        text = "Touch Biometric Sensor",
+                        color = TextPrimary,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.Center
+                    )
+                }
+            },
+            text = {
+                Text(
+                    text = "Confirm your identity using fingerprint or face scan. (Emulator Simulation Mode: tap trigger button below to log in).",
+                    color = TextSecondary,
+                    fontSize = 13.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showSimulatedBiometricDialog = false
+                        viewModel.loginWithBiometrics()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = BlueAccent),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Text("SIMULATE TOUCH", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showSimulatedBiometricDialog = false }
+                ) {
+                    Text("USE PIN FALLBACK", color = TextSecondary, fontWeight = FontWeight.Bold)
+                }
+            }
+        )
     }
 
     Column(
@@ -345,7 +475,18 @@ fun EnterPinScreen(viewModel: DexcargoViewModel) {
         // BIOMETRIC QUICK TRIGGER
         if (quickEmp?.biometricEnabled == true) {
             IconButton(
-                onClick = { viewModel.loginWithBiometrics() },
+                onClick = { 
+                    val activity = context as? androidx.fragment.app.FragmentActivity
+                    if (activity != null) {
+                        triggerRealBiometric(
+                            activity = activity,
+                            onSuccess = { viewModel.loginWithBiometrics() },
+                            onFallback = { showSimulatedBiometricDialog = true }
+                        )
+                    } else {
+                        showSimulatedBiometricDialog = true
+                    }
+                },
                 modifier = Modifier
                     .padding(vertical = 8.dp)
                     .size(54.dp)

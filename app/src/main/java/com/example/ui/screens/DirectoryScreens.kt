@@ -76,6 +76,66 @@ fun PackageListScreen(viewModel: DexcargoViewModel) {
             onBack = { viewModel.navigateBack() }
         )
 
+        val isOnline by viewModel.isOnline.collectAsState()
+
+        // NETWORK STATUS SIMULATOR BAR
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 6.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(if (isOnline) Color(0xFF1B3A24) else Color(0xFF3E1C1C))
+                .border(1.dp, if (isOnline) Color(0xFF2E6B3E) else Color(0xFF7E2E2E), RoundedCornerShape(12.dp))
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.weight(1f)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(if (isOnline) Color(0xFF22C55E) else Color(0xFFEF4444))
+                )
+                Column {
+                    Text(
+                        text = if (isOnline) "NETWORK: ONLINE (CLOUD SYNC)" else "NETWORK: OFFLINE (LOCAL ROOM CACHE)",
+                        color = Color.White,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = if (isOnline) "New registries upload immediately." else "Registries cache locally. Toggle 'Go Online' to auto-sync.",
+                        color = Color.White.copy(alpha = 0.7f),
+                        fontSize = 8.5.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+
+            Button(
+                onClick = { viewModel.toggleOnlineStatus() },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (isOnline) Color(0xFFEF4444) else Color(0xFF22C55E)
+                ),
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                shape = RoundedCornerShape(6.dp),
+                modifier = Modifier.height(24.dp)
+            ) {
+                Text(
+                    text = if (isOnline) "Go Offline" else "Go Online",
+                    color = Color.White,
+                    fontSize = 8.5.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+
         // SEARCH BAR WITH ACCENT CODES
         Row(
             modifier = Modifier
@@ -755,7 +815,22 @@ fun PackageCardRow(pkg: CargoPackage, onClick: () -> Unit) {
         Spacer(modifier = Modifier.width(11.dp))
 
         Column(modifier = Modifier.weight(1f)) {
-            Text(pkg.id, color = TextPrimary, fontSize = 11.5.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Text(pkg.id, color = TextPrimary, fontSize = 11.5.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+                if (pkg.syncPending) {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(Color(0xFF7E2E2E))
+                            .padding(horizontal = 4.dp, vertical = 1.5.dp)
+                    ) {
+                        Text("OFFLINE 🔄", color = Color.White, fontSize = 7.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
             Text(pkg.consignee, color = TextSecondary, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text("${pkg.mode.replace(" Freight", "")} · ${pkg.weight} kg", color = TextMuted, fontSize = 10.sp)
         }

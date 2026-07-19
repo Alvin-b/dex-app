@@ -40,7 +40,8 @@ data class CargoPackage(
     val packagePhotoUrl: String? = null,
     val packagePhotoCapturedAt: String? = null,
     val packagePhotoCapturedBy: String? = null,
-    val signaturePoints: String? = null // Comma-separated coordinates or path for drawing signature
+    val signaturePoints: String? = null, // Comma-separated coordinates or path for drawing signature
+    val syncPending: Boolean = false
 )
 
 @Entity(tableName = "payment_notifications")

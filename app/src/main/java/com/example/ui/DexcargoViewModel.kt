@@ -83,6 +83,44 @@ class DexcargoViewModel(private val repository: DexcargoRepository) : ViewModel(
     val pinErrorMessage = MutableStateFlow("")
     val biometricOptionEnabled = MutableStateFlow(false)
 
+    val isOnline = MutableStateFlow(true)
+    private val _syncStatusMessage = MutableStateFlow("")
+    val syncStatusMessage: StateFlow<String> = _syncStatusMessage.asStateFlow()
+
+    fun toggleOnlineStatus() {
+        isOnline.value = !isOnline.value
+        if (isOnline.value) {
+            autoSyncPackages()
+        }
+    }
+
+    fun autoSyncPackages() {
+        viewModelScope.launch {
+            val list = repository.cargoPackages.first()
+            val unsyncedList = list.filter { it.syncPending }
+            if (unsyncedList.isNotEmpty()) {
+                unsyncedList.forEach { pkg ->
+                    val syncedPkg = pkg.copy(syncPending = false)
+                    repository.insertPackage(syncedPkg)
+                    
+                    val actor = currentEmployee.value?.id ?: "System"
+                    repository.insertLog(
+                        AuditLog(
+                            id = "AL-" + System.currentTimeMillis() + "-" + java.util.UUID.randomUUID().toString().take(4),
+                            action = "SYNC_OFFLINE_CARGO",
+                            actor = "$actor (${currentEmployee.value?.name ?: "Agent"})",
+                            timestamp = getNowTimestamp(),
+                            details = "Automatically synced package ${pkg.id} (${pkg.consignee}) from local offline storage to cloud servers."
+                        )
+                    )
+                }
+                _syncStatusMessage.value = "Auto-Synced ${unsyncedList.size} offline package(s) successfully!"
+                delay(4000)
+                _syncStatusMessage.value = ""
+            }
+        }
+    }
+
     // --- REACTIVE FLOWS FROM DB ---
     val employees: StateFlow<List<Employee>> = repository.employees
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -378,6 +416,7 @@ class DexcargoViewModel(private val repository: DexcargoRepository) : ViewModel(
             else -> "Sales Manager Direct"
         }
 
+        val online = isOnline.value
         val pkg = CargoPackage(
             id = revId.value,
             consignee = revName.value,
@@ -394,7 +433,8 @@ class DexcargoViewModel(private val repository: DexcargoRepository) : ViewModel(
             registeredAt = getNowTimestamp(),
             packagePhotoUrl = capturedPhotoUrl.value,
             packagePhotoCapturedAt = getNowTimestamp(),
-            packagePhotoCapturedBy = "$actor (${currentEmployee.value?.name ?: "Agent"})"
+            packagePhotoCapturedBy = "$actor (${currentEmployee.value?.name ?: "Agent"})",
+            syncPending = !online
         )
 
         viewModelScope.launch {
@@ -402,14 +442,27 @@ class DexcargoViewModel(private val repository: DexcargoRepository) : ViewModel(
             repository.insertLog(
                 AuditLog(
                     id = "AL-" + System.currentTimeMillis(),
-                    action = "REGISTER_CARGO",
+                    action = if (online) "REGISTER_CARGO" else "REGISTER_CARGO_OFFLINE",
                     actor = "$actor (${currentEmployee.value?.name})",
                     timestamp = getNowTimestamp(),
-                    details = "Registered package ${pkg.id} for consignee ${pkg.consignee}"
+                    details = if (online) {
+                        "Registered package ${pkg.id} for consignee ${pkg.consignee}"
+                    } else {
+                        "Registered package ${pkg.id} offline in local storage (pending sync)"
+                    }
                 )
             )
             selectedPackageId.value = pkg.id
-            navigateTo(Screen.RegistrationSuccess)
+            if (!online) {
+                _syncStatusMessage.value = "Registered Offline! Saved locally to Room db."
+                delay(2000)
+                _syncStatusMessage.value = ""
+            } else {
+                _syncStatusMessage.value = "Package ${pkg.id} registered and synced!"
+                delay(2000)
+                _syncStatusMessage.value = ""
+            }
+            navigateTo(Screen.PackageList)
         }
     }
 
