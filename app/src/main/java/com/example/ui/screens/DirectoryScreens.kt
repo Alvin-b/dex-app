@@ -109,30 +109,13 @@ fun PackageListScreen(viewModel: DexcargoViewModel) {
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = if (isOnline) "New registries upload immediately." else "Registries cache locally. Toggle 'Go Online' to auto-sync.",
+                        text = if (isOnline) "New registries upload immediately." else "Registries cache locally. Will auto-sync when internet is restored.",
                         color = Color.White.copy(alpha = 0.7f),
                         fontSize = 8.5.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
-            }
-
-            Button(
-                onClick = { viewModel.toggleOnlineStatus() },
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isOnline) Color(0xFFEF4444) else Color(0xFF22C55E)
-                ),
-                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                shape = RoundedCornerShape(6.dp),
-                modifier = Modifier.height(24.dp)
-            ) {
-                Text(
-                    text = if (isOnline) "Go Offline" else "Go Online",
-                    color = Color.White,
-                    fontSize = 8.5.sp,
-                    fontWeight = FontWeight.Bold
-                )
             }
         }
 
@@ -159,16 +142,11 @@ fun PackageListScreen(viewModel: DexcargoViewModel) {
                     .background(DarkSurfaceVariant)
                     .border(1.dp, DarkBorder, RoundedCornerShape(10.dp))
                     .clickable {
-                        // Find first registered package and query it
-                        val unpaid = packages.find { it.status == "registered" }
-                        if (unpaid != null) {
-                            viewModel.packageSearchQuery.value = unpaid.id
-                            Toast.makeText(context, "Barcode scanned: ${unpaid.id}", Toast.LENGTH_SHORT).show()
-                        }
+                        viewModel.navigateTo(Screen.BarcodeScanner)
                     },
                 contentAlignment = Alignment.Center
             ) {
-                Icon(Icons.Default.QrCodeScanner, "Simulate Scanner", tint = OrangeAccent, modifier = Modifier.size(16.dp))
+                Icon(Icons.Default.QrCodeScanner, "Open Barcode Scanner", tint = OrangeAccent, modifier = Modifier.size(16.dp))
             }
         }
 
@@ -335,36 +313,6 @@ fun PackageDetailsScreen(viewModel: DexcargoViewModel) {
                     DetailsRow(lbl = "Description of Goods", value = pkg.desc)
                     DetailsRow(lbl = "Registry Agent ID", value = pkg.salesRep)
                     DetailsRow(lbl = "Total Charges", value = "KES ${pkg.cost.toLocaleString()}", valueColor = OrangeAccent, isBoldValue = true)
-                }
-            }
-
-            // Linked Evidence allocations
-            if (linkedAllocations.isNotEmpty()) {
-                item {
-                    SectionTitle(text = "Linked Payment Evidence")
-                }
-                items(linkedAllocations) { alloc ->
-                    val notif = notifications.find { it.id == alloc.paymentNotificationId }
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(DarkSurface)
-                            .border(1.dp, DarkBorder, RoundedCornerShape(10.dp))
-                            .padding(10.dp)
-                    ) {
-                        Column {
-                            Text(notif?.notificationNumber ?: "Evidence Ref", color = TextPrimary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Text("Linked by: ${alloc.linkedBy.split(" ")[0]}", color = TextSecondary, fontSize = 9.sp)
-                                Text("Allocated: KES ${alloc.allocatedAmount.toLocaleString()}", color = OrangeAccent, fontSize = 9.5.sp, fontWeight = FontWeight.Bold)
-                            }
-                        }
-                    }
                 }
             }
 

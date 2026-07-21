@@ -29,6 +29,8 @@ import androidx.compose.ui.unit.sp
 import com.example.data.CargoPackage
 import com.example.ui.DexcargoViewModel
 import com.example.ui.Screen
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
 import com.example.ui.components.*
 import com.example.ui.theme.*
 
@@ -354,15 +356,49 @@ fun CollectionSuccessScreen(viewModel: DexcargoViewModel) {
 fun CommissionsScreen(viewModel: DexcargoViewModel) {
     val activeFilter by viewModel.activeCommissionFilter.collectAsState()
     val packages by viewModel.cargoPackages.collectAsState()
+    val backendCommissions by viewModel.backendCommissions.collectAsState()
+    val isOnline by viewModel.isOnline.collectAsState()
+    val currentEmp by viewModel.currentEmployee.collectAsState()
+    val employees by viewModel.employees.collectAsState()
+
+    val isAdmin = currentEmp?.role == "admin"
+    var selectedEmployeeId by remember { mutableStateOf<String?>("all") }
+    var dropdownExpanded by remember { mutableStateOf(false) }
+
+    val filteredCommissions = remember(backendCommissions, selectedEmployeeId, isAdmin) {
+        if (isAdmin) {
+            if (selectedEmployeeId == "all") {
+                backendCommissions
+            } else {
+                backendCommissions.filter { it.employeeId == selectedEmployeeId }
+            }
+        } else {
+            backendCommissions
+        }
+    }
 
     val clearedPackages = remember(packages) {
         packages.filter { it.status != "registered" }
     }
 
-    val (earned, paid, outstanding) = when (activeFilter) {
-        "month" -> Triple(24680, 12400, 12280)
-        "last" -> Triple(20870, 20870, 0)
-        else -> Triple(82450, 70170, 12280)
+    val (earned, paid, outstanding) = remember(filteredCommissions, activeFilter, isOnline) {
+        if (isOnline && filteredCommissions.isNotEmpty()) {
+            val filtered = when (activeFilter) {
+                "month" -> filteredCommissions
+                "last" -> filteredCommissions.filter { it.status.equals("paid", ignoreCase = true) }
+                else -> filteredCommissions
+            }
+            val total = filtered.sumOf { it.amount }.toInt()
+            val paidAmt = filtered.filter { it.status.equals("paid", ignoreCase = true) }.sumOf { it.amount }.toInt()
+            val outstandingAmt = total - paidAmt
+            Triple(total, paidAmt, outstandingAmt)
+        } else {
+            when (activeFilter) {
+                "month" -> Triple(24680, 12400, 12280)
+                "last" -> Triple(20870, 20870, 0)
+                else -> Triple(82450, 70170, 12280)
+            }
+        }
     }
 
     Column(
@@ -372,9 +408,58 @@ fun CommissionsScreen(viewModel: DexcargoViewModel) {
             .padding(bottom = 76.dp)
     ) {
         ScreenHeader(
-            title = "My Commissions",
+            title = if (isAdmin) "Employee Commissions" else "My Commissions",
             onBack = { viewModel.navigateBack() }
         )
+
+        if (isAdmin) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 6.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(DarkSurfaceVariant)
+                        .border(1.dp, DarkBorder, RoundedCornerShape(10.dp))
+                        .clickable { dropdownExpanded = true }
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    val currentName = if (selectedEmployeeId == "all") "All Employees" else {
+                        employees.find { it.id == selectedEmployeeId }?.name ?: selectedEmployeeId
+                    }
+                    Text("Select Employee: $currentName", color = OrangeAccent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Icon(Icons.Default.ArrowDropDown, "expand", tint = TextSecondary, modifier = Modifier.size(16.dp))
+                }
+
+                DropdownMenu(
+                    expanded = dropdownExpanded,
+                    onDismissRequest = { dropdownExpanded = false },
+                    modifier = Modifier.background(DarkSurfaceVariant)
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("All Employees", color = TextPrimary, fontSize = 12.sp) },
+                        onClick = {
+                            selectedEmployeeId = "all"
+                            dropdownExpanded = false
+                        }
+                    )
+                    employees.forEach { emp ->
+                        DropdownMenuItem(
+                            text = { Text("${emp.name} (${emp.id})", color = TextPrimary, fontSize = 12.sp) },
+                            onClick = {
+                                selectedEmployeeId = emp.id
+                                dropdownExpanded = false
+                            }
+                        )
+                    }
+                }
+            }
+        }
 
         // TAB BAR FILTERS
         Row(
@@ -455,26 +540,64 @@ fun CommissionsScreen(viewModel: DexcargoViewModel) {
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Earned Commission Breakdown".uppercase(), color = TextSecondary, fontSize = 9.5.sp, fontWeight = FontWeight.Bold)
-                clearedPackages.forEach { p ->
-                    val overrideVal = (p.cost * 0.1).toInt()
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column {
-                            Text(p.id, color = TextPrimary, fontSize = 11.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
-                            Text("Registered ${p.registeredAt}", color = TextMuted, fontSize = 9.sp)
+                
+                if (isOnline && filteredCommissions.isNotEmpty()) {
+                    filteredCommissions.forEach { comm ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Text(comm.orderId, color = TextPrimary, fontSize = 11.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+                                val empName = employees.find { it.id == comm.employeeId }?.name ?: comm.employeeId
+                                Text("${comm.commissionType.replaceFirstChar { it.uppercase() }} · $empName", color = TextMuted, fontSize = 9.sp)
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text("+ KES ${comm.amount.toInt().toLocaleString()}", color = OrangeAccent, fontSize = 11.5.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+                                val statusColor = when (comm.status.lowercase()) {
+                                    "paid" -> GreenAccent
+                                    "approved" -> BlueAccent
+                                    else -> OrangeAccent
+                                }
+                                val statusBgColor = when (comm.status.lowercase()) {
+                                    "paid" -> GreenAccentBg
+                                    "approved" -> BlueAccent.copy(alpha = 0.15f)
+                                    else -> OrangeAccent.copy(alpha = 0.15f)
+                                }
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(99.dp))
+                                        .background(statusBgColor)
+                                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                                ) {
+                                    Text(comm.status.uppercase(), color = statusColor, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
                         }
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text("+ KES ${overrideVal.toLocaleString()}", color = OrangeAccent, fontSize = 11.5.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(99.dp))
-                                    .background(GreenAccentBg)
-                                    .padding(horizontal = 6.dp, vertical = 2.dp)
-                            ) {
-                                Text("Audited", color = GreenAccent, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                    }
+                } else {
+                    clearedPackages.forEach { p ->
+                        val overrideVal = (p.cost * 0.1).toInt()
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Text(p.id, color = TextPrimary, fontSize = 11.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+                                Text("Registered ${p.registeredAt}", color = TextMuted, fontSize = 9.sp)
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text("+ KES ${overrideVal.toLocaleString()}", color = OrangeAccent, fontSize = 11.5.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(99.dp))
+                                        .background(GreenAccentBg)
+                                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                                ) {
+                                    Text("Audited", color = GreenAccent, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                                }
                             }
                         }
                     }

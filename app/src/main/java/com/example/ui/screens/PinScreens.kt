@@ -85,8 +85,18 @@ fun SetPinScreen(viewModel: DexcargoViewModel) {
             val newVal = currentInput + key
             if (step == 1) {
                 viewModel.pinSetupFirst.value = newVal
+                if (newVal.length == 4) {
+                    step = 2
+                    viewModel.pinErrorMessage.value = ""
+                }
             } else {
                 viewModel.pinSetupSecond.value = newVal
+                if (newVal.length == 4) {
+                    val success = viewModel.verifyAndSavePin()
+                    if (!success) {
+                        step = 1
+                    }
+                }
             }
         }
     }
@@ -136,7 +146,7 @@ fun SetPinScreen(viewModel: DexcargoViewModel) {
         Spacer(modifier = Modifier.height(6.dp))
 
         Text(
-            text = "Used for fast sign-in on this device. You can still use biometrics.",
+            text = if (step == 1) "Enter a 4-digit PIN for quick access on this device." else "Re-enter your 4-digit PIN to confirm.",
             color = TextSecondary,
             fontSize = 12.sp,
             textAlign = TextAlign.Center,
@@ -224,7 +234,7 @@ fun SetPinScreen(viewModel: DexcargoViewModel) {
         // NAVIGATION BUTTONS
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
+            horizontalArrangement = Arrangement.Center
         ) {
             if (step == 2) {
                 Button(
@@ -233,45 +243,21 @@ fun SetPinScreen(viewModel: DexcargoViewModel) {
                         viewModel.pinSetupSecond.value = ""
                         viewModel.pinErrorMessage.value = ""
                     },
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.fillMaxWidth(0.6f),
                     colors = ButtonDefaults.buttonColors(containerColor = DarkSurface),
                     shape = RoundedCornerShape(12.dp)
                 ) {
-                    Text("Back", color = TextSecondary, fontWeight = FontWeight.Bold)
+                    Text("Back to Start", color = TextSecondary, fontWeight = FontWeight.Bold)
                 }
             } else {
                 Button(
                     onClick = { viewModel.logout() },
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.fillMaxWidth(0.6f),
                     colors = ButtonDefaults.buttonColors(containerColor = DarkSurface),
                     shape = RoundedCornerShape(12.dp)
                 ) {
                     Text("Cancel", color = TextSecondary, fontWeight = FontWeight.Bold)
                 }
-            }
-
-            Button(
-                onClick = {
-                    if (step == 1) {
-                        if (pinFirst.length == 4) {
-                            step = 2
-                            viewModel.pinErrorMessage.value = ""
-                        } else {
-                            viewModel.pinErrorMessage.value = "Please enter a 4-digit PIN."
-                        }
-                    } else {
-                        viewModel.verifyAndSavePin()
-                    }
-                },
-                modifier = Modifier.weight(2f),
-                colors = ButtonDefaults.buttonColors(containerColor = OrangeAccent),
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Text(
-                    text = if (step == 1) "Next: Confirm PIN" else "Save PIN & Log In",
-                    color = Color(0xFF1A1200),
-                    fontWeight = FontWeight.Bold
-                )
             }
         }
         
@@ -285,36 +271,6 @@ fun EnterPinScreen(viewModel: DexcargoViewModel) {
     val enteredPin by viewModel.enteredPin.collectAsState()
     val errorMsg by viewModel.pinErrorMessage.collectAsState()
     val context = LocalContext.current
-    var showSimulatedBiometricDialog by remember { mutableStateOf(false) }
-
-    // Automatically trigger biometric check on entry as the default action
-    LaunchedEffect(quickEmp) {
-        if (quickEmp?.biometricEnabled == true) {
-            val activity = context as? androidx.fragment.app.FragmentActivity
-            if (activity != null) {
-                triggerRealBiometric(
-                    activity = activity,
-                    onSuccess = {
-                        viewModel.loginWithBiometrics()
-                    },
-                    onFallback = { err ->
-                        // Show simulator if physical scan is not supported (emulator)
-                        if (err.contains("hardware", ignoreCase = true) || 
-                            err.contains("support", ignoreCase = true) || 
-                            err.contains("not recognized", ignoreCase = true) || 
-                            err.contains("not enrolled", ignoreCase = true) ||
-                            err.contains("error", ignoreCase = true)) {
-                            showSimulatedBiometricDialog = true
-                        } else {
-                            Toast.makeText(context, "Biometric fallback: $err", Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                )
-            } else {
-                showSimulatedBiometricDialog = true
-            }
-        }
-    }
 
     fun onKeyClick(key: String) {
         if (enteredPin.length < 4) {
@@ -330,62 +286,6 @@ fun EnterPinScreen(viewModel: DexcargoViewModel) {
         if (enteredPin.isNotEmpty()) {
             viewModel.enteredPin.value = enteredPin.dropLast(1)
         }
-    }
-
-    if (showSimulatedBiometricDialog) {
-        AlertDialog(
-            onDismissRequest = { showSimulatedBiometricDialog = false },
-            containerColor = DarkSurface,
-            title = {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Fingerprint,
-                        contentDescription = "Biometric Scan",
-                        tint = BlueAccent,
-                        modifier = Modifier.size(64.dp)
-                    )
-                    Spacer(modifier = Modifier.height(10.dp))
-                    Text(
-                        text = "Touch Biometric Sensor",
-                        color = TextPrimary,
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold,
-                        textAlign = TextAlign.Center
-                    )
-                }
-            },
-            text = {
-                Text(
-                    text = "Confirm your identity using fingerprint or face scan. (Emulator Simulation Mode: tap trigger button below to log in).",
-                    color = TextSecondary,
-                    fontSize = 13.sp,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth()
-                )
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        showSimulatedBiometricDialog = false
-                        viewModel.loginWithBiometrics()
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = BlueAccent),
-                    shape = RoundedCornerShape(10.dp)
-                ) {
-                    Text("SIMULATE TOUCH", color = Color.White, fontWeight = FontWeight.Bold)
-                }
-            },
-            dismissButton = {
-                TextButton(
-                    onClick = { showSimulatedBiometricDialog = false }
-                ) {
-                    Text("USE PIN FALLBACK", color = TextSecondary, fontWeight = FontWeight.Bold)
-                }
-            }
-        )
     }
 
     Column(
@@ -472,45 +372,7 @@ fun EnterPinScreen(viewModel: DexcargoViewModel) {
             Spacer(modifier = Modifier.height(20.dp))
         }
 
-        // BIOMETRIC QUICK TRIGGER
-        if (quickEmp?.biometricEnabled == true) {
-            IconButton(
-                onClick = { 
-                    val activity = context as? androidx.fragment.app.FragmentActivity
-                    if (activity != null) {
-                        triggerRealBiometric(
-                            activity = activity,
-                            onSuccess = { viewModel.loginWithBiometrics() },
-                            onFallback = { showSimulatedBiometricDialog = true }
-                        )
-                    } else {
-                        showSimulatedBiometricDialog = true
-                    }
-                },
-                modifier = Modifier
-                    .padding(vertical = 8.dp)
-                    .size(54.dp)
-                    .clip(CircleShape)
-                    .background(BlueAccent.copy(alpha = 0.12f))
-                    .border(1.dp, BlueAccent.copy(alpha = 0.25f), CircleShape)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Fingerprint,
-                    contentDescription = "Sign in with Biometrics",
-                    tint = BlueAccent,
-                    modifier = Modifier.size(28.dp)
-                )
-            }
-            Text(
-                text = "Tap to sign in with Biometrics",
-                color = BlueAccent,
-                fontSize = 10.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(bottom = 12.dp)
-            )
-        } else {
-            Spacer(modifier = Modifier.height(30.dp))
-        }
+        Spacer(modifier = Modifier.height(30.dp))
 
         // NUMERIC KEYPAD
         NumericKeypad(

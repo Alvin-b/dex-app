@@ -37,8 +37,9 @@ fun SalesRepHomeScreen(viewModel: DexcargoViewModel) {
     val packages by viewModel.cargoPackages.collectAsState()
     val alerts by viewModel.broadcastMessages.collectAsState()
 
-    val myPackages = remember(packages) {
-        packages.filter { it.salesRep.contains("SR-002") }
+    val myPackages = remember(packages, currentEmp) {
+        val currentId = currentEmp?.id ?: "SR-002"
+        packages.filter { it.salesRep.contains(currentId) }
     }
 
     val totalCost = remember(myPackages) {
@@ -55,6 +56,12 @@ fun SalesRepHomeScreen(viewModel: DexcargoViewModel) {
         alerts.filter { it.target == "all" || it.target == "sr" }
     }
 
+    var showNotificationsDialog by remember { mutableStateOf(false) }
+
+    if (showNotificationsDialog) {
+        NotificationsDialog(messages = myAlerts, onDismiss = { showNotificationsDialog = false })
+    }
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -69,6 +76,8 @@ fun SalesRepHomeScreen(viewModel: DexcargoViewModel) {
                 id = currentEmp?.id ?: "SR-002",
                 badgeColor = OrangeAccent,
                 initials = "JK",
+                notificationCount = myAlerts.size,
+                onNotificationClick = { showNotificationsDialog = true },
                 onProfileClick = { viewModel.navigateTo(Screen.ProfileSettings) }
             )
         }
@@ -217,6 +226,12 @@ fun LogisticsManagerHomeScreen(viewModel: DexcargoViewModel) {
         alerts.filter { it.target == "all" || it.target == "lm" }
     }
 
+    var showNotificationsDialog by remember { mutableStateOf(false) }
+
+    if (showNotificationsDialog) {
+        NotificationsDialog(messages = myAlerts, onDismiss = { showNotificationsDialog = false })
+    }
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -230,6 +245,8 @@ fun LogisticsManagerHomeScreen(viewModel: DexcargoViewModel) {
                 id = currentEmp?.id ?: "LM-001",
                 badgeColor = BlueAccent,
                 initials = "MW",
+                notificationCount = myAlerts.size,
+                onNotificationClick = { showNotificationsDialog = true },
                 onProfileClick = { viewModel.navigateTo(Screen.ProfileSettings) }
             )
         }
@@ -426,6 +443,12 @@ fun SalesManagerHomeScreen(viewModel: DexcargoViewModel) {
         alerts.filter { it.target == "all" || it.target == "sm" }
     }
 
+    var showNotificationsDialog by remember { mutableStateOf(false) }
+
+    if (showNotificationsDialog) {
+        NotificationsDialog(messages = myAlerts, onDismiss = { showNotificationsDialog = false })
+    }
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -439,6 +462,8 @@ fun SalesManagerHomeScreen(viewModel: DexcargoViewModel) {
                 id = currentEmp?.id ?: "SM-001",
                 badgeColor = GreenAccent,
                 initials = "PM",
+                notificationCount = myAlerts.size,
+                onNotificationClick = { showNotificationsDialog = true },
                 onProfileClick = { viewModel.navigateTo(Screen.ProfileSettings) }
             )
         }
@@ -580,6 +605,13 @@ fun AdminHomeScreen(viewModel: DexcargoViewModel) {
     val employeesList by viewModel.employees.collectAsState()
     val packages by viewModel.cargoPackages.collectAsState()
     val notifications by viewModel.paymentNotifications.collectAsState()
+    val alerts by viewModel.broadcastMessages.collectAsState()
+
+    var showNotificationsDialog by remember { mutableStateOf(false) }
+
+    if (showNotificationsDialog) {
+        NotificationsDialog(messages = alerts, onDismiss = { showNotificationsDialog = false })
+    }
 
     val johnPackages = remember(packages) {
         packages.filter { it.salesRep.contains("SR-002") && it.status != "registered" }
@@ -617,6 +649,8 @@ fun AdminHomeScreen(viewModel: DexcargoViewModel) {
                 id = currentEmp?.id ?: "ADM-001",
                 badgeColor = PurpleAccent,
                 initials = "AD",
+                notificationCount = alerts.size,
+                onNotificationClick = { showNotificationsDialog = true },
                 onProfileClick = { viewModel.navigateTo(Screen.ProfileSettings) }
             )
         }
@@ -1057,6 +1091,8 @@ fun EmployeeProfileBar(
     id: String,
     badgeColor: Color,
     initials: String,
+    notificationCount: Int = 0,
+    onNotificationClick: () -> Unit = {},
     onProfileClick: () -> Unit
 ) {
     Row(
@@ -1089,6 +1125,42 @@ fun EmployeeProfileBar(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
+            // Notification Bell with Badge
+            Box(
+                modifier = Modifier
+                    .size(34.dp)
+                    .clip(CircleShape)
+                    .background(DarkSurfaceVariant)
+                    .border(1.dp, DarkBorder, CircleShape)
+                    .clickable { onNotificationClick() },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Notifications,
+                    contentDescription = "Notifications",
+                    tint = if (notificationCount > 0) OrangeAccent else TextSecondary,
+                    modifier = Modifier.size(18.dp)
+                )
+                if (notificationCount > 0) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(2.dp)
+                            .size(14.dp)
+                            .clip(CircleShape)
+                            .background(Color.Red),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = notificationCount.toString(),
+                            color = Color.White,
+                            fontSize = 8.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+
             RoleBadge(role = id.split("-")[0].lowercase(), id = id.split("-")[1])
 
             Box(
@@ -1109,6 +1181,112 @@ fun EmployeeProfileBar(
                     fontSize = 11.sp,
                     fontWeight = FontWeight.ExtraBold
                 )
+            }
+        }
+    }
+}
+
+@Composable
+fun NotificationsDialog(
+    messages: List<com.example.data.BroadcastMessage>,
+    onDismiss: () -> Unit
+) {
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onDismiss
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .background(DarkSurface)
+                .border(1.dp, DarkBorder, RoundedCornerShape(16.dp))
+                .padding(16.dp)
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Notifications Inbox (${messages.size})",
+                        color = OrangeAccent,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Box(
+                        modifier = Modifier
+                            .size(24.dp)
+                            .clip(CircleShape)
+                            .background(DarkSurfaceVariant)
+                            .clickable { onDismiss() },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Close",
+                            tint = TextSecondary,
+                            modifier = Modifier.size(14.dp)
+                        )
+                    }
+                }
+
+                if (messages.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(100.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "No notifications yet.",
+                            color = TextMuted,
+                            fontSize = 12.sp
+                        )
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 300.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(messages) { msg ->
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(DarkSurfaceVariant)
+                                    .border(1.dp, DarkBorder, RoundedCornerShape(10.dp))
+                                    .padding(10.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        text = "Notification: ${msg.target.uppercase()}",
+                                        color = TextPrimary,
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    val time = msg.timestamp ?: msg.createdAt
+                                    Text(
+                                        text = if (time.contains("T")) time.substringBefore("T") else time,
+                                        color = TextMuted,
+                                        fontSize = 9.sp
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = msg.message,
+                                    color = TextSecondary,
+                                    fontSize = 11.sp
+                                )
+                            }
+                        }
+                    }
+                }
             }
         }
     }

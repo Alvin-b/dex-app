@@ -5,10 +5,12 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.data.*
+import com.example.data.api.*
 import com.example.data.gemini.GeminiOcrHelper
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import com.example.ui.components.NetworkMonitor
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -37,9 +39,13 @@ sealed class Screen {
     object PaymentNotificationCenter : Screen()
     object LinkPayment : Screen()
     object ProfileSettings : Screen()
+    object BarcodeScanner : Screen()
 }
 
-class DexcargoViewModel(private val repository: DexcargoRepository) : ViewModel() {
+class DexcargoViewModel(
+    private val repository: DexcargoRepository,
+    private val authRepository: SupabaseAuthRepository
+) : ViewModel() {
 
     // --- NAVIGATION ---
     private val _currentScreen = MutableStateFlow<Screen>(Screen.Login)
@@ -47,9 +53,67 @@ class DexcargoViewModel(private val repository: DexcargoRepository) : ViewModel(
 
     private val navigationStack = mutableListOf<Screen>()
 
+    val backendCommissions = MutableStateFlow<List<com.example.data.api.CommissionApi>>(emptyList())
+
+    fun refreshCommissions() {
+        viewModelScope.launch {
+            if (isOnline.value) {
+                val emp = currentEmployee.value
+                val isAdmin = emp?.role == "admin"
+                val list = repository.getCommissionsFromBackend(employeeId = if (isAdmin) null else emp?.id)
+                backendCommissions.value = list
+            }
+        }
+    }
+
+    fun approveCommission(id: String) {
+        viewModelScope.launch {
+            if (isOnline.value) {
+                val success = repository.approveCommissionOnBackend(id)
+                if (success) {
+                    refreshCommissions()
+                    repository.insertLog(
+                        AuditLog(
+                            id = "AL-" + System.currentTimeMillis(),
+                            action = "APPROVE_COMMISSION",
+                            actor = "${currentEmployee.value?.id ?: "Admin"} (${currentEmployee.value?.name ?: "Admin"})",
+                            timestamp = getNowTimestamp(),
+                            details = "Approved commission ID: $id"
+                        ),
+                        online = true
+                    )
+                }
+            }
+        }
+    }
+
+    fun markCommissionPaid(id: String, reference: String) {
+        viewModelScope.launch {
+            if (isOnline.value) {
+                val success = repository.markCommissionPaidOnBackend(id, reference)
+                if (success) {
+                    refreshCommissions()
+                    repository.insertLog(
+                        AuditLog(
+                            id = "AL-" + System.currentTimeMillis(),
+                            action = "PAY_COMMISSION",
+                            actor = "${currentEmployee.value?.id ?: "Admin"} (${currentEmployee.value?.name ?: "Admin"})",
+                            timestamp = getNowTimestamp(),
+                            details = "Marked commission ID: $id as Paid with ref: $reference"
+                        ),
+                        online = true
+                    )
+                }
+            }
+        }
+    }
+
     fun navigateTo(screen: Screen) {
         navigationStack.add(_currentScreen.value)
         _currentScreen.value = screen
+        if (screen is Screen.MyCommissions) {
+            refreshCommissions()
+        }
     }
 
     fun navigateBack() {
@@ -83,9 +147,18 @@ class DexcargoViewModel(private val repository: DexcargoRepository) : ViewModel(
     val pinErrorMessage = MutableStateFlow("")
     val biometricOptionEnabled = MutableStateFlow(false)
 
-    val isOnline = MutableStateFlow(true)
+    val isOnline = NetworkMonitor.isOnline
     private val _syncStatusMessage = MutableStateFlow("")
     val syncStatusMessage: StateFlow<String> = _syncStatusMessage.asStateFlow()
+
+    fun setOnlineStatus(online: Boolean) {
+        if (isOnline.value != online) {
+            isOnline.value = online
+            if (online) {
+                autoSyncPackages()
+            }
+        }
+    }
 
     fun toggleOnlineStatus() {
         isOnline.value = !isOnline.value
@@ -99,9 +172,24 @@ class DexcargoViewModel(private val repository: DexcargoRepository) : ViewModel(
             val list = repository.cargoPackages.first()
             val unsyncedList = list.filter { it.syncPending }
             if (unsyncedList.isNotEmpty()) {
+                NetworkMonitor.isSyncing.value = true
+                _syncStatusMessage.value = "Synchronizing data with cloud..."
                 unsyncedList.forEach { pkg ->
-                    val syncedPkg = pkg.copy(syncPending = false)
-                    repository.insertPackage(syncedPkg)
+                    val photoUrl = pkg.packagePhotoUrl
+                    var finalPhotoUrl = photoUrl
+                    if (!photoUrl.isNullOrEmpty() && !photoUrl.startsWith("package-photos/")) {
+                        try {
+                            val decodedBytes = android.util.Base64.decode(pkg.packagePhotoUrl, android.util.Base64.DEFAULT)
+                            val uploadedUrl = repository.uploadPhoto(pkg.id, "photo.jpg", decodedBytes, true)
+                            if (uploadedUrl != null) {
+                                finalPhotoUrl = uploadedUrl
+                            }
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                        }
+                    }
+                    val syncedPkg = pkg.copy(packagePhotoUrl = finalPhotoUrl)
+                    repository.insertPackage(syncedPkg, online = true)
                     
                     val actor = currentEmployee.value?.id ?: "System"
                     repository.insertLog(
@@ -111,13 +199,24 @@ class DexcargoViewModel(private val repository: DexcargoRepository) : ViewModel(
                             actor = "$actor (${currentEmployee.value?.name ?: "Agent"})",
                             timestamp = getNowTimestamp(),
                             details = "Automatically synced package ${pkg.id} (${pkg.consignee}) from local offline storage to cloud servers."
-                        )
+                        ),
+                        online = true
                     )
                 }
-                _syncStatusMessage.value = "Auto-Synced ${unsyncedList.size} offline package(s) successfully!"
-                delay(4000)
-                _syncStatusMessage.value = ""
             }
+            try {
+                repository.syncAllFromBackend(online = isOnline.value)
+                if (unsyncedList.isNotEmpty()) {
+                    _syncStatusMessage.value = "Auto-Synced ${unsyncedList.size} offline package(s) and pulled cloud updates!"
+                } else {
+                    _syncStatusMessage.value = "Cloud updates synchronized!"
+                }
+            } catch (e: Exception) {
+                _syncStatusMessage.value = "Cloud synchronization failed"
+            }
+            NetworkMonitor.isSyncing.value = false
+            delay(4000)
+            _syncStatusMessage.value = ""
         }
     }
 
@@ -227,25 +326,19 @@ class DexcargoViewModel(private val repository: DexcargoRepository) : ViewModel(
     val mockTextContent = MutableStateFlow("")
 
     init {
-        // Automatically pre-populate default database records if they are empty
+        // Automatically restore session on startup or show Login Screen
         viewModelScope.launch {
-            repository.employees.first().let { list ->
-                if (list.isEmpty()) {
-                    repository.resetDatabaseToDefaults()
+            val restoredEmp = authRepository.restoreSessionOnStartup()
+            if (restoredEmp != null) {
+                _currentEmployee.value = restoredEmp
+                if (!restoredEmp.pin.isNullOrEmpty()) {
+                    quickAccessEmployee.value = restoredEmp
+                    _currentScreen.value = Screen.EnterPin
+                } else {
+                    routeToUserHome()
                 }
-            }
-        }
-
-        // Quick access detection on startup
-        viewModelScope.launch {
-            repository.employees.collect { list ->
-                if (list.isNotEmpty() && quickAccessEmployee.value == null && _currentScreen.value == Screen.Login) {
-                    val activeWithPin = list.find { !it.pin.isNullOrEmpty() }
-                    if (activeWithPin != null) {
-                        quickAccessEmployee.value = activeWithPin
-                        _currentScreen.value = Screen.EnterPin
-                    }
-                }
+            } else {
+                _currentScreen.value = Screen.Login
             }
         }
     }
@@ -253,18 +346,20 @@ class DexcargoViewModel(private val repository: DexcargoRepository) : ViewModel(
     // --- CORE OPERATIONS ---
 
     fun login(email: String, pass: String): Boolean {
-        var success = false
         viewModelScope.launch {
-            val empList = repository.employees.first()
-            val match = empList.find {
-                (it.email.equals(email, ignoreCase = true) || it.id.equals(email, ignoreCase = true)) &&
-                        it.password == pass
-            }
-            if (match != null) {
-                if (match.isActive) {
-                    _currentEmployee.value = match
-                    success = true
-                    if (match.pin.isNullOrEmpty()) {
+            _syncStatusMessage.value = "Authenticating with Supabase..."
+            val result = authRepository.signIn(email, pass)
+
+            if (result.isSuccess) {
+                val employee = result.getOrNull()
+                _currentEmployee.value = employee
+                _syncStatusMessage.value = "Login successful"
+                
+                // Trigger autoSyncPackages to sync local pending and fetch server database
+                autoSyncPackages()
+
+                if (employee != null) {
+                    if (employee.pin.isNullOrEmpty()) {
                         pinSetupFirst.value = ""
                         pinSetupSecond.value = ""
                         pinErrorMessage.value = ""
@@ -274,9 +369,12 @@ class DexcargoViewModel(private val repository: DexcargoRepository) : ViewModel(
                         routeToUserHome()
                     }
                 }
+            } else {
+                _syncStatusMessage.value = "Authentication failed"
+                pinErrorMessage.value = result.exceptionOrNull()?.message ?: "Invalid email or password"
             }
         }
-        return success
+        return true
     }
 
     fun verifyAndSavePin(): Boolean {
@@ -294,7 +392,7 @@ class DexcargoViewModel(private val repository: DexcargoRepository) : ViewModel(
         }
         val emp = _currentEmployee.value ?: return false
         viewModelScope.launch {
-            repository.updateEmployeePinAndBiometrics(emp.id, pin1, biometricOptionEnabled.value)
+            repository.updateEmployeePinAndBiometrics(emp.id, pin1, biometricOptionEnabled.value, online = isOnline.value)
             val updated = repository.getEmployeeById(emp.id)
             _currentEmployee.value = updated
             quickAccessEmployee.value = updated
@@ -339,7 +437,7 @@ class DexcargoViewModel(private val repository: DexcargoRepository) : ViewModel(
     fun updateProfilePinAndBiometrics(newPin: String?, newBiometrics: Boolean, onDone: () -> Unit = {}) {
         val emp = _currentEmployee.value ?: return
         viewModelScope.launch {
-            repository.updateEmployeePinAndBiometrics(emp.id, newPin, newBiometrics)
+            repository.updateEmployeePinAndBiometrics(emp.id, newPin, newBiometrics, online = isOnline.value)
             val updated = repository.getEmployeeById(emp.id)
             _currentEmployee.value = updated
             // Update quick access employee if they match
@@ -361,28 +459,30 @@ class DexcargoViewModel(private val repository: DexcargoRepository) : ViewModel(
     }
 
     fun logout() {
+        authRepository.signOut()
         _currentEmployee.value = null
+        quickAccessEmployee.value = null
         navigationStack.clear()
-        viewModelScope.launch {
-            val list = repository.employees.first()
-            val activeWithPin = list.find { !it.pin.isNullOrEmpty() }
-            if (activeWithPin != null) {
-                quickAccessEmployee.value = activeWithPin
-                _currentScreen.value = Screen.EnterPin
-            } else {
-                _currentScreen.value = Screen.Login
-            }
-        }
+        _currentScreen.value = Screen.Login
     }
 
-    fun resetDemoData() {
-        viewModelScope.launch {
-            repository.resetDatabaseToDefaults()
-            _currentEmployee.value = null
-            quickAccessEmployee.value = null
-            navigationStack.clear()
-            _currentScreen.value = Screen.Login
-        }
+    val triggerStickerCameraEvent = kotlinx.coroutines.flow.MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val triggerPackageCameraEvent = kotlinx.coroutines.flow.MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val triggerEvidenceCameraEvent = kotlinx.coroutines.flow.MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val triggerEvidenceGalleryEvent = kotlinx.coroutines.flow.MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+
+    fun onEvidencePhotoCaptured(bitmap: android.graphics.Bitmap) {
+        mockImageSelect.value = "base64:" + encodeBitmapToBase64(bitmap)
+    }
+
+    fun onStickerPhotoCaptured(bitmap: android.graphics.Bitmap) {
+        triggerOcrScan(bitmap)
+    }
+
+    fun onPackagePhotoCaptured(bitmap: android.graphics.Bitmap) {
+        capturedPackageBitmap.value = bitmap
+        isPackagePhotoCaptured.value = true
+        capturedPhotoUrl.value = encodeBitmapToBase64(bitmap)
     }
 
     fun triggerOcrScan(customBitmap: android.graphics.Bitmap? = null, onFinish: () -> Unit = {}) {
@@ -412,33 +512,57 @@ class DexcargoViewModel(private val repository: DexcargoRepository) : ViewModel(
     fun savePackageRegistry() {
         val actor = currentEmployee.value?.id ?: "System"
         val roleLabel = when (currentEmployee.value?.role) {
-            "sr" -> "SR-002 John Kamau"
+            "sr" -> "${currentEmployee.value?.id ?: "SR-002"} ${currentEmployee.value?.name ?: "John Kamau"}"
             else -> "Sales Manager Direct"
         }
 
         val online = isOnline.value
-        val pkg = CargoPackage(
-            id = revId.value,
-            consignee = revName.value,
-            phone = revPhone.value,
-            origin = revOrigin.value,
-            dest = revDest.value,
-            desc = revDesc.value,
-            mode = revMode.value,
-            weight = revWeight.value.toDoubleOrNull() ?: 1.0,
-            pcs = revPcs.value.toIntOrNull() ?: 1,
-            cost = revCost.value.toIntOrNull() ?: 3000,
-            salesRep = roleLabel,
-            status = "registered",
-            registeredAt = getNowTimestamp(),
-            packagePhotoUrl = capturedPhotoUrl.value,
-            packagePhotoCapturedAt = getNowTimestamp(),
-            packagePhotoCapturedBy = "$actor (${currentEmployee.value?.name ?: "Agent"})",
-            syncPending = !online
-        )
 
         viewModelScope.launch {
-            repository.insertPackage(pkg)
+            var finalPhotoUrl = capturedPhotoUrl.value
+            val bitmap = capturedPackageBitmap.value
+            if (bitmap != null) {
+                if (online) {
+                    try {
+                        val outputStream = java.io.ByteArrayOutputStream()
+                        bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, outputStream)
+                        val bytes = outputStream.toByteArray()
+                        val uploadedUrl = repository.uploadPhoto(revId.value, "photo.jpg", bytes, true)
+                        if (uploadedUrl != null) {
+                            finalPhotoUrl = uploadedUrl
+                        } else {
+                            finalPhotoUrl = "base64:" + encodeBitmapToBase64(bitmap)
+                        }
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                        finalPhotoUrl = "base64:" + encodeBitmapToBase64(bitmap)
+                    }
+                } else {
+                    finalPhotoUrl = "base64:" + encodeBitmapToBase64(bitmap)
+                }
+            }
+
+            val pkg = CargoPackage(
+                id = revId.value,
+                consignee = revName.value,
+                phone = revPhone.value,
+                origin = revOrigin.value,
+                dest = revDest.value,
+                desc = revDesc.value,
+                mode = revMode.value,
+                weight = revWeight.value.toDoubleOrNull() ?: 1.0,
+                pcs = revPcs.value.toIntOrNull() ?: 1,
+                cost = revCost.value.toIntOrNull() ?: 3000,
+                salesRep = roleLabel,
+                status = "registered",
+                registeredAt = getNowTimestamp(),
+                packagePhotoUrl = finalPhotoUrl,
+                packagePhotoCapturedAt = getNowTimestamp(),
+                packagePhotoCapturedBy = "$actor (${currentEmployee.value?.name ?: "Agent"})",
+                syncPending = !online
+            )
+
+            repository.insertPackage(pkg, online = online)
             repository.insertLog(
                 AuditLog(
                     id = "AL-" + System.currentTimeMillis(),
@@ -450,7 +574,8 @@ class DexcargoViewModel(private val repository: DexcargoRepository) : ViewModel(
                     } else {
                         "Registered package ${pkg.id} offline in local storage (pending sync)"
                     }
-                )
+                ),
+                online = online
             )
             selectedPackageId.value = pkg.id
             if (!online) {
@@ -469,7 +594,7 @@ class DexcargoViewModel(private val repository: DexcargoRepository) : ViewModel(
     fun saveManualPackageRegistry() {
         val actor = currentEmployee.value?.id ?: "System"
         val roleLabel = when (currentEmployee.value?.role) {
-            "sr" -> "SR-002 John Kamau"
+            "sr" -> "${currentEmployee.value?.id ?: "SR-002"} ${currentEmployee.value?.name ?: "John Kamau"}"
             else -> "Sales Manager Direct"
         }
 
@@ -528,7 +653,7 @@ class DexcargoViewModel(private val repository: DexcargoRepository) : ViewModel(
                     paymentMethod = method,
                     paymentRef = ref
                 )
-                repository.insertPackage(updated)
+                repository.insertPackage(updated, online = isOnline.value)
                 repository.insertLog(
                     AuditLog(
                         id = "AL-" + System.currentTimeMillis(),
@@ -536,7 +661,8 @@ class DexcargoViewModel(private val repository: DexcargoRepository) : ViewModel(
                         actor = "$actor (${currentEmployee.value?.name})",
                         timestamp = getNowTimestamp(),
                         details = "Confirmed payment of KES ${pkg.cost} for ${pkg.id} via $method (Ref: $ref)"
-                    )
+                    ),
+                    online = isOnline.value
                 )
                 navigateTo(Screen.PaymentSuccess)
             }
@@ -558,7 +684,7 @@ class DexcargoViewModel(private val repository: DexcargoRepository) : ViewModel(
                     collectorPhone = verCollectorPhone.value,
                     signaturePoints = signatureData
                 )
-                repository.insertPackage(updated)
+                repository.insertPackage(updated, online = isOnline.value)
                 repository.insertLog(
                     AuditLog(
                         id = "AL-" + System.currentTimeMillis(),
@@ -566,7 +692,8 @@ class DexcargoViewModel(private val repository: DexcargoRepository) : ViewModel(
                         actor = "$actor (${currentEmployee.value?.name})",
                         timestamp = getNowTimestamp(),
                         details = "Handed over cargo ${pkg.id} to ${updated.collectorName} (ID: ${updated.collectorId})"
-                    )
+                    ),
+                    online = isOnline.value
                 )
                 navigateTo(Screen.CollectionSuccess)
             }
@@ -579,6 +706,22 @@ class DexcargoViewModel(private val repository: DexcargoRepository) : ViewModel(
         val notifNumber = "PAY-$dateStr-" + (1000 + Random().nextInt(9000))
         val actor = currentEmployee.value?.id ?: "System"
 
+        val text = mockTextContent.value
+        val parsedAmount = if (!isImage && text.isNotBlank()) {
+            // Match KES 1,400 or KES 1400
+            val match = Regex("Amount: KES ([0-9,]+)", RegexOption.IGNORE_CASE).find(text)
+            match?.groupValues?.get(1)?.replace(",", "")?.toIntOrNull()
+        } else if (isImage) {
+            1400 + Random().nextInt(5000)
+        } else null
+
+        val parsedPhone = if (!isImage && text.isNotBlank()) {
+            val match = Regex("Phone: ([0-9]+)", RegexOption.IGNORE_CASE).find(text)
+            match?.groupValues?.get(1) ?: "0722000000"
+        } else if (isImage) {
+            "0722" + (100000 + Random().nextInt(900000))
+        } else null
+
         val notif = PaymentNotification(
             id = "PN-" + System.currentTimeMillis(),
             notificationNumber = notifNumber,
@@ -587,19 +730,23 @@ class DexcargoViewModel(private val repository: DexcargoRepository) : ViewModel(
             textContent = mockTextContent.value,
             uploadedBy = "$actor (${currentEmployee.value?.name})",
             uploadedAt = getNowTimestamp(),
-            status = "PENDING"
+            status = "PENDING",
+            amount = parsedAmount,
+            senderPhone = parsedPhone,
+            timestamp = getNowTimestamp()
         )
 
         viewModelScope.launch {
-            repository.insertNotification(notif)
+            repository.insertNotification(notif, online = isOnline.value)
             repository.insertLog(
                 AuditLog(
                     id = "AL-" + System.currentTimeMillis(),
                     action = "UPLOAD_PAYMENT_EVIDENCE",
                     actor = "$actor (${currentEmployee.value?.name})",
                     timestamp = getNowTimestamp(),
-                    details = "Uploaded $activeUploadType payment evidence for $notifNumber"
-                )
+                    details = "Uploaded $activeUploadType payment evidence for $notifNumber (Amount: KES ${parsedAmount ?: "N/A"})"
+                ),
+                online = isOnline.value
             )
             mockTextContent.value = ""
             activePaymentTab.value = "inbox"
@@ -641,7 +788,7 @@ class DexcargoViewModel(private val repository: DexcargoRepository) : ViewModel(
                     linkedBy = "$actor (${currentEmployee.value?.name ?: "Clerk"})",
                     linkedAt = getNowTimestamp()
                 )
-                repository.insertAllocation(alloc)
+                repository.insertAllocation(alloc, online = isOnline.value)
 
                 // Update package to paid status
                 val originalPkg = repository.getPackageById(linkPkg.id)
@@ -652,7 +799,7 @@ class DexcargoViewModel(private val repository: DexcargoRepository) : ViewModel(
                         paymentMethod = "Linked Reference",
                         paymentRef = notif.notificationNumber
                     )
-                    repository.insertPackage(updated)
+                    repository.insertPackage(updated, online = isOnline.value)
                 }
 
                 repository.insertLog(
@@ -662,11 +809,12 @@ class DexcargoViewModel(private val repository: DexcargoRepository) : ViewModel(
                         actor = "$actor (${currentEmployee.value?.name})",
                         timestamp = getNowTimestamp(),
                         details = "Linked PAY-Evidence ${notif.notificationNumber} to ${linkPkg.id}"
-                    )
+                    ),
+                    online = isOnline.value
                 )
             }
 
-            repository.updateNotificationStatus(notif.id, "LINKED")
+            repository.updateNotificationStatus(notif.id, "LINKED", online = isOnline.value)
             linkingNotifId.value = null
             selectedLinkOrders.clear()
             activePaymentTab.value = "audit"
@@ -681,11 +829,13 @@ class DexcargoViewModel(private val repository: DexcargoRepository) : ViewModel(
             id = "BM-" + System.currentTimeMillis(),
             message = broadcastText.value,
             target = broadcastTarget.value,
-            createdAt = SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date())
+            createdAt = SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date()),
+            sender = currentEmployee.value?.name ?: "Admin",
+            timestamp = getNowTimestamp()
         )
 
         viewModelScope.launch {
-            repository.insertMessage(message)
+            repository.insertMessage(message, online = isOnline.value)
             repository.insertLog(
                 AuditLog(
                     id = "AL-" + System.currentTimeMillis(),
@@ -693,7 +843,8 @@ class DexcargoViewModel(private val repository: DexcargoRepository) : ViewModel(
                     actor = "$actor (${currentEmployee.value?.name})",
                     timestamp = getNowTimestamp(),
                     details = "Dispatched broadcast message: '${message.message}' to ${message.target}"
-                )
+                ),
+                online = isOnline.value
             )
             broadcastText.value = ""
         }
@@ -701,26 +852,62 @@ class DexcargoViewModel(private val repository: DexcargoRepository) : ViewModel(
 
     fun registerNewEmployee() {
         if (empRegName.value.isBlank() || empRegEmail.value.isBlank() || empRegPass.value.isBlank()) return
-        val newId = empRegRole.value.uppercase() + "-" + (100 + Random().nextInt(900))
-        val newEmp = Employee(
-            id = newId,
-            name = empRegName.value,
-            email = empRegEmail.value,
-            password = empRegPass.value,
-            role = empRegRole.value,
-            isActive = true
-        )
+        val name = empRegName.value
+        val email = empRegEmail.value
+        val pass = empRegPass.value
+        val role = empRegRole.value
 
         viewModelScope.launch {
+            var newId = role.uppercase() + "-" + (100 + java.util.Random().nextInt(900))
+            if (isOnline.value && SupabaseClient.accessToken != null) {
+                try {
+                    val signUpResponse = SupabaseClient.api.signup(
+                        apiKey = SupabaseClient.API_KEY,
+                        authHeader = SupabaseClient.getBearerHeader(),
+                        request = SignupRequest(
+                            email = email,
+                            password = pass,
+                            data = mapOf("name" to name)
+                        )
+                    )
+                    if (signUpResponse.isSuccessful && signUpResponse.body() != null) {
+                        val body = signUpResponse.body()!!
+                        val userId = body.id
+                        if (userId != null) {
+                            newId = userId
+                            SupabaseClient.api.createUserRole(
+                                apiKey = SupabaseClient.API_KEY,
+                                authHeader = SupabaseClient.getBearerHeader(),
+                                role = UserRoleResponse(userId, role)
+                            )
+                        }
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+
+            val newEmp = Employee(
+                id = newId,
+                name = name,
+                email = email,
+                password = pass,
+                role = role,
+                isActive = true
+            )
+
             repository.insertEmployee(newEmp)
+            
+            val actor = currentEmployee.value?.id ?: "ADM-001"
             repository.insertLog(
                 AuditLog(
                     id = "AL-" + System.currentTimeMillis(),
                     action = "REGISTER_EMPLOYEE",
-                    actor = "ADM-001 (Administrator)",
+                    actor = "$actor (${currentEmployee.value?.name ?: "Admin"})",
                     timestamp = getNowTimestamp(),
-                    details = "Registered new employee ${newEmp.name} (${newEmp.id}) as ${newEmp.role.uppercase()}"
-                )
+                    details = "Registered new employee $name ($newId) as ${role.uppercase()}"
+                ),
+                online = isOnline.value
             )
             empRegName.value = ""
             empRegEmail.value = ""
@@ -734,7 +921,7 @@ class DexcargoViewModel(private val repository: DexcargoRepository) : ViewModel(
             val list = repository.employees.first()
             val match = list.find { it.id == empId } ?: return@launch
             val newStatus = !match.isActive
-            repository.updateEmployeeActiveStatus(empId, newStatus)
+            repository.updateEmployeeActiveStatus(empId, newStatus, online = isOnline.value)
             repository.insertLog(
                 AuditLog(
                     id = "AL-" + System.currentTimeMillis(),
@@ -742,7 +929,8 @@ class DexcargoViewModel(private val repository: DexcargoRepository) : ViewModel(
                     actor = "ADM-001 (Administrator)",
                     timestamp = getNowTimestamp(),
                     details = "Toggled active state of employee ${match.name} (${match.id}) to $newStatus"
-                )
+                ),
+                online = isOnline.value
             )
         }
     }
@@ -796,11 +984,14 @@ class DexcargoViewModel(private val repository: DexcargoRepository) : ViewModel(
     }
 }
 
-class DexcargoViewModelFactory(private val repository: DexcargoRepository) : ViewModelProvider.Factory {
+class DexcargoViewModelFactory(
+    private val repository: DexcargoRepository,
+    private val authRepository: SupabaseAuthRepository
+) : ViewModelProvider.Factory {
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(DexcargoViewModel::class.java)) {
             @Suppress("UNCHECKED_CAST")
-            return DexcargoViewModel(repository) as T
+            return DexcargoViewModel(repository, authRepository) as T
         }
         throw IllegalArgumentException("Unknown ViewModel class")
     }

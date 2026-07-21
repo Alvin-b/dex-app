@@ -30,24 +30,10 @@ import com.example.ui.components.DexButton
 import com.example.ui.components.DexTextField
 import com.example.ui.theme.*
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LoginScreen(viewModel: DexcargoViewModel) {
-    val employees by viewModel.employees.collectAsState()
     val empRegEmailState = remember { mutableStateOf("") }
-    val empRegPassState = remember { mutableStateOf("password") }
-
-    var expandedDropdown by remember { mutableStateOf(false) }
-    var selectedEmployee by remember { mutableStateOf<Employee?>(null) }
-
-    // Synchronize initial login details with first available employee (SR-002 John Kamau)
-    LaunchedEffect(employees) {
-        if (employees.isNotEmpty() && selectedEmployee == null) {
-            val john = employees.find { it.id == "SR-002" } ?: employees.first()
-            selectedEmployee = john
-            empRegEmailState.value = john.email
-        }
-    }
+    val empRegPassState = remember { mutableStateOf("") }
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -92,97 +78,6 @@ fun LoginScreen(viewModel: DexcargoViewModel) {
 
             Spacer(modifier = Modifier.weight(0.5f))
 
-            // DROPDOWN IDENTITIES
-            Text(
-                text = "CHOOSE MOCK IDENTITY",
-                color = TextSecondary,
-                fontSize = 9.5.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 4.dp),
-                letterSpacing = 0.5.sp
-            )
-
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(DarkSurface)
-                    .border(1.dp, DarkBorder, RoundedCornerShape(10.dp))
-                    .clickable { expandedDropdown = true }
-                    .padding(horizontal = 14.dp, vertical = 12.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    val label = selectedEmployee?.let {
-                        val roleText = when (it.role) {
-                            "sr" -> "Sales Representative"
-                            "lm" -> "Logistics Manager"
-                            "sm" -> "Sales Lead"
-                            else -> "Administrator"
-                        }
-                        val status = if (it.isActive) "" else " (DEACTIVATED)"
-                        "${it.name} ($roleText - ${it.id})$status"
-                    } ?: "Selecting Employee..."
-
-                    Text(
-                        text = label,
-                        color = TextPrimary,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f)
-                    )
-                    Icon(
-                        imageVector = Icons.Default.ArrowDropDown,
-                        contentDescription = "Expand Options",
-                        tint = TextSecondary,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-
-                DropdownMenu(
-                    expanded = expandedDropdown,
-                    onDismissRequest = { expandedDropdown = false },
-                    modifier = Modifier
-                        .fillMaxWidth(0.85f)
-                        .background(DarkSurfaceVariant)
-                        .border(1.dp, DarkBorder, RoundedCornerShape(8.dp))
-                ) {
-                    employees.forEach { emp ->
-                        val roleLabel = when (emp.role) {
-                            "sr" -> "Sales Representative"
-                            "lm" -> "Logistics Manager"
-                            "sm" -> "Sales Lead"
-                            else -> "Administrator"
-                        }
-                        DropdownMenuItem(
-                            text = {
-                                Text(
-                                    text = "${emp.name} ($roleLabel - ${emp.id})${if (emp.isActive) "" else " (DEACTIVATED)"}",
-                                    color = if (emp.isActive) TextPrimary else TextMuted,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Medium
-                                )
-                            },
-                            onClick = {
-                                selectedEmployee = emp
-                                empRegEmailState.value = emp.email
-                                expandedDropdown = false
-                            },
-                            modifier = Modifier.background(DarkSurfaceVariant)
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
             // EMAIL / ID INPUT
             DexTextField(
                 value = empRegEmailState.value,
@@ -201,7 +96,7 @@ fun LoginScreen(viewModel: DexcargoViewModel) {
                 label = "Password",
                 placeholder = "••••••••",
                 visualTransformation = PasswordVisualTransformation(),
-                readOnly = true,
+                readOnly = false,
                 trailingIcon = {
                     Icon(
                         imageVector = Icons.Default.Visibility,

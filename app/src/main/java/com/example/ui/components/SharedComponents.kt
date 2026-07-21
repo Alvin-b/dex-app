@@ -36,8 +36,15 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.runtime.collectAsState
+import kotlinx.coroutines.flow.MutableStateFlow
 import com.example.data.CargoPackage
 import com.example.ui.theme.*
+
+object NetworkMonitor {
+    val isOnline = MutableStateFlow(true)
+    val isSyncing = MutableStateFlow(false)
+}
 
 @Composable
 fun StatusPill(status: String) {
@@ -207,6 +214,9 @@ fun ScreenHeader(
     onBack: (() -> Unit)? = null,
     actions: @Composable (RowScope.() -> Unit)? = null
 ) {
+    val isOnline by NetworkMonitor.isOnline.collectAsState()
+    val isSyncing by NetworkMonitor.isSyncing.collectAsState()
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -214,7 +224,10 @@ fun ScreenHeader(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.weight(1f)
+        ) {
             if (onBack != null) {
                 IconButton(
                     onClick = onBack,
@@ -235,8 +248,64 @@ fun ScreenHeader(
                 fontWeight = FontWeight.ExtraBold,
                 fontFamily = FontFamily.SansSerif,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false)
             )
+
+            if (!isOnline) {
+                Spacer(modifier = Modifier.width(8.dp))
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(Color(0xFF5A1E1E))
+                        .border(1.dp, Color(0xFFEF4444), RoundedCornerShape(6.dp))
+                        .padding(horizontal = 6.dp, vertical = 3.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(6.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFFEF4444))
+                        )
+                        Text(
+                            text = "OFFLINE",
+                            color = Color(0xFFFCA5A5),
+                            fontSize = 8.5.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            } else if (isSyncing) {
+                Spacer(modifier = Modifier.width(8.dp))
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(Color(0xFF1E3A5F))
+                        .border(1.dp, BlueAccent, RoundedCornerShape(6.dp))
+                        .padding(horizontal = 6.dp, vertical = 3.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        CircularProgressIndicator(
+                            color = BlueAccent,
+                            strokeWidth = 1.dp,
+                            modifier = Modifier.size(8.dp)
+                        )
+                        Text(
+                            text = "SYNCING",
+                            color = Color(0xFF93C5FD),
+                            fontSize = 8.5.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
         }
         if (actions != null) {
             Row(verticalAlignment = Alignment.CenterVertically, content = actions)
@@ -334,7 +403,8 @@ fun CargoThumbnail(
     val bitmap = remember(pkg.packagePhotoUrl, pkg.id) {
         if (!pkg.packagePhotoUrl.isNullOrBlank() && pkg.packagePhotoUrl != "simulated_url") {
             try {
-                val decodedBytes = android.util.Base64.decode(pkg.packagePhotoUrl, android.util.Base64.DEFAULT)
+                val cleanBase64 = if (pkg.packagePhotoUrl.startsWith("base64:")) pkg.packagePhotoUrl.substringAfter("base64:") else pkg.packagePhotoUrl
+                val decodedBytes = android.util.Base64.decode(cleanBase64, android.util.Base64.DEFAULT)
                 android.graphics.BitmapFactory.decodeByteArray(decodedBytes, 0, decodedBytes.size)
             } catch (e: Exception) {
                 generateLocalSimulatedPackageBitmap(pkg.id)

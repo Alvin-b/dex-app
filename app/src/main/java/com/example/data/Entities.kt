@@ -53,7 +53,10 @@ data class PaymentNotification(
     val textContent: String? = null,
     val uploadedBy: String,
     val uploadedAt: String,
-    val status: String // "PENDING" or "LINKED"
+    val status: String, // "PENDING" or "LINKED"
+    val amount: Int? = null,
+    val senderPhone: String? = null,
+    val timestamp: String? = null
 )
 
 @Entity(tableName = "payment_allocations")
@@ -64,7 +67,8 @@ data class PaymentAllocation(
     val trackingNumber: String,
     val allocatedAmount: Int,
     val linkedBy: String,
-    val linkedAt: String
+    val linkedAt: String,
+    val notificationNumber: String? = null
 )
 
 @Entity(tableName = "audit_logs")
@@ -81,5 +85,7 @@ data class BroadcastMessage(
     @PrimaryKey val id: String,
     val message: String,
     val target: String, // "all", "sr", "lm", "sm"
-    val createdAt: String
+    val createdAt: String,
+    val sender: String? = null,
+    val timestamp: String? = null
 )

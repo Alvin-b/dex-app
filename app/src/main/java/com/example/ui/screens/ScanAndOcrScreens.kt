@@ -7,6 +7,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -15,6 +17,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PhotoCamera
+import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material3.*
@@ -31,8 +34,6 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import android.widget.Toast
 import androidx.compose.ui.platform.LocalContext
 import android.graphics.Bitmap
@@ -56,26 +57,6 @@ fun ScanStickerScreen(viewModel: DexcargoViewModel) {
     val selectedLabelId by viewModel.selectedLabelId.collectAsState()
     val context = LocalContext.current
     var selectedModeTab by remember { mutableStateOf(0) } // 0 = Automated OCR, 1 = Manual Form
-
-    val cameraLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.TakePicturePreview()
-    ) { bitmap: Bitmap? ->
-        if (bitmap != null) {
-            viewModel.triggerOcrScan(bitmap)
-        } else {
-            Toast.makeText(context, "No photo captured", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    val permissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
-    ) { isGranted ->
-        if (isGranted) {
-            cameraLauncher.launch(null)
-        } else {
-            Toast.makeText(context, "Camera permission is required to capture sticker photos.", Toast.LENGTH_LONG).show()
-        }
-    }
 
     Column(
         modifier = Modifier
@@ -291,7 +272,7 @@ fun ScanStickerScreen(viewModel: DexcargoViewModel) {
                                 DexButton(
                                     text = "📸 Real Camera",
                                     onClick = {
-                                        permissionLauncher.launch(android.Manifest.permission.CAMERA)
+                                        viewModel.triggerStickerCameraEvent.tryEmit(Unit)
                                     },
                                     style = OrangeAccent,
                                     textColor = Color(0xFF1A1200),
@@ -663,52 +644,10 @@ fun TakePackagePhotoScreen(viewModel: DexcargoViewModel) {
     val context = LocalContext.current
     val revId by viewModel.revId.collectAsState()
 
-    val cameraLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.TakePicturePreview()
-    ) { bitmap: Bitmap? ->
-        if (bitmap != null) {
-            viewModel.capturedPackageBitmap.value = bitmap
-            viewModel.isPackagePhotoCaptured.value = true
-            viewModel.capturedPhotoUrl.value = viewModel.encodeBitmapToBase64(bitmap)
-            Toast.makeText(context, "Package photo captured successfully!", Toast.LENGTH_SHORT).show()
-        } else {
-            // Generates a beautiful custom package bitmap instead of failing!
-            val simBitmap = viewModel.generateSimulatedPackageBitmap(revId)
-            viewModel.capturedPackageBitmap.value = simBitmap
-            viewModel.isPackagePhotoCaptured.value = true
-            viewModel.capturedPhotoUrl.value = viewModel.encodeBitmapToBase64(simBitmap)
-            Toast.makeText(context, "Using simulated high-fidelity package photo.", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    val permissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
-    ) { isGranted ->
-        if (isGranted) {
-            try {
-                cameraLauncher.launch(null)
-            } catch (e: Exception) {
-                // Generates a beautiful custom package bitmap instead of failing!
-                val simBitmap = viewModel.generateSimulatedPackageBitmap(revId)
-                viewModel.capturedPackageBitmap.value = simBitmap
-                viewModel.isPackagePhotoCaptured.value = true
-                viewModel.capturedPhotoUrl.value = viewModel.encodeBitmapToBase64(simBitmap)
-                Toast.makeText(context, "Using simulated high-fidelity package photo.", Toast.LENGTH_SHORT).show()
-            }
-        } else {
-            // Fallback immediately to simulation so they can proceed!
-            val simBitmap = viewModel.generateSimulatedPackageBitmap(revId)
-            viewModel.capturedPackageBitmap.value = simBitmap
-            viewModel.isPackagePhotoCaptured.value = true
-            viewModel.capturedPhotoUrl.value = viewModel.encodeBitmapToBase64(simBitmap)
-            Toast.makeText(context, "Camera permission denied. Using simulated photo.", Toast.LENGTH_SHORT).show()
-        }
-    }
-
     // Automatically trigger the camera on entering the screen
     LaunchedEffect(Unit) {
         if (!isCaptured) {
-            permissionLauncher.launch(android.Manifest.permission.CAMERA)
+            viewModel.triggerPackageCameraEvent.tryEmit(Unit)
         }
     }
 
@@ -843,7 +782,7 @@ fun TakePackagePhotoScreen(viewModel: DexcargoViewModel) {
                         .background(if (isCaptured) Color.Gray else Color.White)
                         .clickable {
                             if (!isCaptured) {
-                                permissionLauncher.launch(android.Manifest.permission.CAMERA)
+                                viewModel.triggerPackageCameraEvent.tryEmit(Unit)
                             }
                         }
                 )
@@ -1041,5 +980,278 @@ private fun getStepStatus(stepNum: Int, currentStep: Int): StepStatus {
         stepNum < currentStep -> StepStatus.Done
         stepNum == currentStep -> StepStatus.Active
         else -> StepStatus.Wait
+    }
+}
+
+@Composable
+fun BarcodeScannerScreen(viewModel: DexcargoViewModel) {
+    val packages by viewModel.cargoPackages.collectAsState()
+    val context = LocalContext.current
+    var inputTracking by remember { mutableStateOf("") }
+    var scanError by remember { mutableStateOf<String?>(null) }
+    var isScanning by remember { mutableStateOf(false) }
+
+    // Initialize Real Play Services Barcode Scanner
+    val gmsScanner = remember {
+        val options = com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions.Builder()
+            .setBarcodeFormats(com.google.mlkit.vision.barcode.common.Barcode.FORMAT_ALL_FORMATS)
+            .enableAutoZoom()
+            .build()
+        com.google.mlkit.vision.codescanner.GmsBarcodeScanning.getClient(context, options)
+    }
+
+    // Laser scanning animation
+    val infiniteTransition = rememberInfiniteTransition(label = "laser")
+    val laserYOffset by infiniteTransition.animateFloat(
+        initialValue = 0.1f,
+        targetValue = 0.9f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(2000, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "laser"
+    )
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(DarkBg)
+            .padding(bottom = 76.dp)
+    ) {
+        ScreenHeader(
+            title = "Barcode Scanner",
+            onBack = { viewModel.navigateBack() }
+        )
+
+        LazyColumn(
+            modifier = Modifier
+                .weight(1f)
+                .padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            item {
+                Spacer(modifier = Modifier.height(10.dp))
+                Text(
+                    text = "ALIGN BARCODE WITHIN THE VIEWPORT",
+                    color = TextSecondary,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.sp
+                )
+            }
+
+            // Viewfinder scan card
+            item {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(220.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(Color(0xFF0F111A))
+                        .border(1.dp, DarkBorder, RoundedCornerShape(16.dp))
+                        .clickable {
+                            isScanning = true
+                            gmsScanner.startScan()
+                                .addOnSuccessListener { barcode ->
+                                    isScanning = false
+                                    val rawValue = barcode.rawValue
+                                    if (!rawValue.isNullOrBlank()) {
+                                        inputTracking = rawValue
+                                        scanError = null
+                                        val foundPkg = packages.find { it.id == rawValue.trim() }
+                                        if (foundPkg != null) {
+                                            viewModel.packageSearchQuery.value = foundPkg.id
+                                            viewModel.selectedPackageId.value = foundPkg.id
+                                            Toast.makeText(context, "Barcode Scanned: $rawValue ✅", Toast.LENGTH_SHORT).show()
+                                            viewModel.navigateTo(Screen.PackageDetails)
+                                        } else {
+                                            scanError = "Scanned code '$rawValue' but package not found in system."
+                                        }
+                                    }
+                                }
+                                .addOnFailureListener { e ->
+                                    isScanning = false
+                                    scanError = "Scan cancelled/failed: ${e.message}"
+                                }
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    // Corners
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        val strokeWidth = 3.dp.toPx()
+                        val lineLength = 24.dp.toPx()
+                        val padding = 30.dp.toPx()
+
+                        val w = size.width
+                        val h = size.height
+
+                        val rectHeight = h - padding * 2
+
+                        val left = padding
+                        val right = w - padding
+                        val top = padding
+                        val bottom = h - padding
+
+                        // Top-Left corner
+                        drawLine(color = OrangeAccent, start = Offset(left, top), end = Offset(left + lineLength, top), strokeWidth = strokeWidth)
+                        drawLine(color = OrangeAccent, start = Offset(left, top), end = Offset(left, top + lineLength), strokeWidth = strokeWidth)
+
+                        // Top-Right corner
+                        drawLine(color = OrangeAccent, start = Offset(right, top), end = Offset(right - lineLength, top), strokeWidth = strokeWidth)
+                        drawLine(color = OrangeAccent, start = Offset(right, top), end = Offset(right, top + lineLength), strokeWidth = strokeWidth)
+
+                        // Bottom-Left corner
+                        drawLine(color = OrangeAccent, start = Offset(left, bottom), end = Offset(left + lineLength, bottom), strokeWidth = strokeWidth)
+                        drawLine(color = OrangeAccent, start = Offset(left, bottom), end = Offset(left, bottom - lineLength), strokeWidth = strokeWidth)
+
+                        // Bottom-Right corner
+                        drawLine(color = OrangeAccent, start = Offset(right, bottom), end = Offset(right - lineLength, bottom), strokeWidth = strokeWidth)
+                        drawLine(color = OrangeAccent, start = Offset(right, bottom), end = Offset(right, bottom - lineLength), strokeWidth = strokeWidth)
+
+                        // Laser line animation
+                        val laserY = top + (rectHeight * laserYOffset)
+                        drawLine(
+                            color = OrangeAccent,
+                            start = Offset(left + 10.dp.toPx(), laserY),
+                            end = Offset(right - 10.dp.toPx(), laserY),
+                            strokeWidth = 2.dp.toPx()
+                        )
+                    }
+
+                    if (isScanning) {
+                        CircularProgressIndicator(color = OrangeAccent, strokeWidth = 3.dp)
+                    } else {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.padding(16.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.QrCodeScanner,
+                                contentDescription = "Camera viewfinder",
+                                tint = OrangeAccent,
+                                modifier = Modifier.size(54.dp)
+                            )
+                            Text(
+                                "TAP HERE TO SCAN WITH CAMERA",
+                                color = OrangeAccent,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                "Uses ML Kit high-performance laser scanner",
+                                color = TextMuted,
+                                fontSize = 10.sp
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Real Scanner Action Button
+            item {
+                DexButton(
+                    text = "📷 Launch Real Camera Scanner",
+                    onClick = {
+                        isScanning = true
+                        gmsScanner.startScan()
+                            .addOnSuccessListener { barcode ->
+                                isScanning = false
+                                val rawValue = barcode.rawValue
+                                if (!rawValue.isNullOrBlank()) {
+                                    inputTracking = rawValue
+                                    scanError = null
+                                    val foundPkg = packages.find { it.id == rawValue.trim() }
+                                    if (foundPkg != null) {
+                                        viewModel.packageSearchQuery.value = foundPkg.id
+                                        viewModel.selectedPackageId.value = foundPkg.id
+                                        Toast.makeText(context, "Barcode Scanned: $rawValue ✅", Toast.LENGTH_SHORT).show()
+                                        viewModel.navigateTo(Screen.PackageDetails)
+                                    } else {
+                                        scanError = "Scanned code '$rawValue' but package not found in system."
+                                    }
+                                }
+                            }
+                            .addOnFailureListener { e ->
+                                isScanning = false
+                                scanError = "Scan cancelled/failed: ${e.message}"
+                            }
+                    },
+                    style = OrangeAccent
+                )
+            }
+
+            // Input Fields
+            item {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(DarkSurface)
+                        .border(1.dp, DarkBorder, RoundedCornerShape(12.dp))
+                        .padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(
+                        "MANUAL BARCODE SCANNER ENTRY",
+                        color = OrangeAccent,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 0.5.sp
+                    )
+
+                    DexTextField(
+                        value = inputTracking,
+                        onValueChange = {
+                            inputTracking = it
+                            scanError = null
+                        },
+                        label = "Enter Tracking Number",
+                        placeholder = "e.g. 1260707534987"
+                    )
+
+                    if (scanError != null) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Color(0x11FF3B30))
+                                .border(1.dp, Color(0xFFFF3B30), RoundedCornerShape(8.dp))
+                                .padding(8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "⚠️ $scanError",
+                                color = Color(0xFFFF3B30),
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+
+                    DexButton(
+                        text = "🔍 Search Package ID",
+                        onClick = {
+                            if (inputTracking.isBlank()) {
+                                scanError = "Please enter a tracking number"
+                                return@DexButton
+                            }
+                            val foundPkg = packages.find { it.id == inputTracking.trim() }
+                            if (foundPkg != null) {
+                                viewModel.packageSearchQuery.value = foundPkg.id
+                                viewModel.selectedPackageId.value = foundPkg.id
+                                Toast.makeText(context, "Package Found: ${foundPkg.id} ✅", Toast.LENGTH_SHORT).show()
+                                viewModel.navigateTo(Screen.PackageDetails)
+                            } else {
+                                scanError = "Package not found"
+                            }
+                        },
+                        style = OrangeAccent
+                    )
+                }
+            }
+        }
     }
 }

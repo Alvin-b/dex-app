@@ -1,6 +1,12 @@
 package com.example
 
 import android.os.Bundle
+import android.graphics.Bitmap
+import android.content.Intent
+import android.provider.MediaStore
+import android.content.pm.PackageManager
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import androidx.fragment.app.FragmentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -25,11 +31,14 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModelProvider
 import com.example.data.AppDatabase
 import com.example.data.DexcargoRepository
+import com.example.data.SupabaseAuthRepository
 import com.example.ui.*
 import com.example.ui.screens.*
 import com.example.ui.theme.*
 
 class MainActivity : FragmentActivity() {
+    private lateinit var viewModel: DexcargoViewModel
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -37,8 +46,93 @@ class MainActivity : FragmentActivity() {
         // Initialize local Room layers
         val database = AppDatabase.getDatabase(this)
         val repository = DexcargoRepository(database)
-        val viewModelFactory = DexcargoViewModelFactory(repository)
-        val viewModel = ViewModelProvider(this, viewModelFactory)[DexcargoViewModel::class.java]
+        val authRepository = SupabaseAuthRepository(this, database)
+        val viewModelFactory = DexcargoViewModelFactory(repository, authRepository)
+        viewModel = ViewModelProvider(this, viewModelFactory)[DexcargoViewModel::class.java]
+
+        // Register automatic network observer
+        val connectivityManager = getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+        val activeNetwork = connectivityManager.activeNetworkInfo
+        val isInitiallyConnected = activeNetwork != null && activeNetwork.isConnected
+        viewModel.isOnline.value = isInitiallyConnected
+
+        val networkCallback = object : android.net.ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: android.net.Network) {
+                super.onAvailable(network)
+                lifecycleScope.launch {
+                    viewModel.setOnlineStatus(true)
+                }
+            }
+
+            override fun onLost(network: android.net.Network) {
+                super.onLost(network)
+                lifecycleScope.launch {
+                    viewModel.setOnlineStatus(false)
+                }
+            }
+        }
+        val networkRequest = android.net.NetworkRequest.Builder()
+            .addCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .build()
+        connectivityManager.registerNetworkCallback(networkRequest, networkCallback)
+
+        // Subscribe to camera trigger events
+        lifecycleScope.launch {
+            viewModel.triggerStickerCameraEvent.collect {
+                if (checkSelfPermission(android.Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                    try {
+                        val intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
+                        startActivityForResult(intent, 102)
+                    } catch (e: Exception) {
+                        android.widget.Toast.makeText(this@MainActivity, "Could not open camera.", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                } else {
+                    requestPermissions(arrayOf(android.Manifest.permission.CAMERA), 101)
+                }
+            }
+        }
+
+        lifecycleScope.launch {
+            viewModel.triggerPackageCameraEvent.collect {
+                if (checkSelfPermission(android.Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                    try {
+                        val intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
+                        startActivityForResult(intent, 104)
+                    } catch (e: Exception) {
+                        val simBitmap = viewModel.generateSimulatedPackageBitmap(viewModel.revId.value)
+                        viewModel.onPackagePhotoCaptured(simBitmap)
+                    }
+                } else {
+                    requestPermissions(arrayOf(android.Manifest.permission.CAMERA), 103)
+                }
+            }
+        }
+
+        lifecycleScope.launch {
+            viewModel.triggerEvidenceCameraEvent.collect {
+                if (checkSelfPermission(android.Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                    try {
+                        val intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
+                        startActivityForResult(intent, 106)
+                    } catch (e: Exception) {
+                        android.widget.Toast.makeText(this@MainActivity, "Could not open camera.", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                } else {
+                    requestPermissions(arrayOf(android.Manifest.permission.CAMERA), 105)
+                }
+            }
+        }
+
+        lifecycleScope.launch {
+            viewModel.triggerEvidenceGalleryEvent.collect {
+                try {
+                    val intent = Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
+                    startActivityForResult(intent, 108)
+                } catch (e: Exception) {
+                    android.widget.Toast.makeText(this@MainActivity, "Could not open gallery.", android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
 
         setContent {
             MyApplicationTheme {
@@ -112,21 +206,103 @@ class MainActivity : FragmentActivity() {
                             is Screen.PaymentNotificationCenter -> PaymentNotificationCenterScreen(viewModel)
                             is Screen.LinkPayment -> LinkPaymentScreen(viewModel)
                             is Screen.ProfileSettings -> ProfileSettingsScreen(viewModel)
-                        }
-
-                        // SUBTLE ROLE PREVIEW BAR (For reviewers and demos)
-                        if (currentEmp != null) {
-                            Box(
-                                modifier = Modifier
-                                    .align(Alignment.BottomEnd)
-                                    .padding(16.dp)
-                            ) {
-                                RoleQuickPreviewSwitcher(viewModel = viewModel)
-                            }
+                            is Screen.BarcodeScanner -> BarcodeScannerScreen(viewModel)
                         }
                     }
                 }
             }
+        }
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        val granted = grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED
+        if (requestCode == 101) {
+            if (granted) {
+                try {
+                    val intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
+                    startActivityForResult(intent, 102)
+                } catch (e: Exception) {
+                    android.widget.Toast.makeText(this, "Could not open camera.", android.widget.Toast.LENGTH_SHORT).show()
+                }
+            } else {
+                android.widget.Toast.makeText(this, "Camera permission is required to capture sticker photos.", android.widget.Toast.LENGTH_LONG).show()
+            }
+        } else if (requestCode == 103) {
+            if (granted) {
+                try {
+                    val intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
+                    startActivityForResult(intent, 104)
+                } catch (e: Exception) {
+                    val simBitmap = viewModel.generateSimulatedPackageBitmap(viewModel.revId.value)
+                    viewModel.onPackagePhotoCaptured(simBitmap)
+                }
+            } else {
+                val simBitmap = viewModel.generateSimulatedPackageBitmap(viewModel.revId.value)
+                viewModel.onPackagePhotoCaptured(simBitmap)
+                android.widget.Toast.makeText(this, "Camera permission denied. Using simulated photo.", android.widget.Toast.LENGTH_SHORT).show()
+            }
+        } else if (requestCode == 105) {
+            if (granted) {
+                try {
+                    val intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
+                    startActivityForResult(intent, 106)
+                } catch (e: Exception) {
+                    android.widget.Toast.makeText(this, "Could not open camera.", android.widget.Toast.LENGTH_SHORT).show()
+                }
+            } else {
+                android.widget.Toast.makeText(this, "Camera permission is required to capture photos.", android.widget.Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (resultCode == RESULT_OK) {
+            if (requestCode == 108) {
+                val uri = data?.data
+                if (uri != null) {
+                    try {
+                        val inputStream = contentResolver.openInputStream(uri)
+                        val bitmap = android.graphics.BitmapFactory.decodeStream(inputStream)
+                        if (bitmap != null) {
+                            viewModel.onEvidencePhotoCaptured(bitmap)
+                        } else {
+                            android.widget.Toast.makeText(this, "Could not load image", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    } catch (e: Exception) {
+                        android.widget.Toast.makeText(this, "Error loading image", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                }
+                return
+            }
+
+            val bitmap = data?.extras?.get("data") as? Bitmap
+            if (bitmap != null) {
+                if (requestCode == 102) {
+                    viewModel.onStickerPhotoCaptured(bitmap)
+                } else if (requestCode == 104) {
+                    viewModel.onPackagePhotoCaptured(bitmap)
+                } else if (requestCode == 106) {
+                    viewModel.onEvidencePhotoCaptured(bitmap)
+                }
+            } else {
+                handleCameraFallback(requestCode)
+            }
+        } else {
+            handleCameraFallback(requestCode)
+        }
+    }
+
+    private fun handleCameraFallback(requestCode: Int) {
+        if (requestCode == 102) {
+            android.widget.Toast.makeText(this, "No photo captured", android.widget.Toast.LENGTH_SHORT).show()
+        } else if (requestCode == 104) {
+            val simBitmap = viewModel.generateSimulatedPackageBitmap(viewModel.revId.value)
+            viewModel.onPackagePhotoCaptured(simBitmap)
+            android.widget.Toast.makeText(this, "Using simulated high-fidelity package photo.", android.widget.Toast.LENGTH_SHORT).show()
+        } else if (requestCode == 106) {
+            android.widget.Toast.makeText(this, "No photo captured", android.widget.Toast.LENGTH_SHORT).show()
         }
     }
 }
@@ -189,65 +365,3 @@ fun DexBottomNavBar(currentScreen: Screen, onTabClick: (String) -> Unit) {
     }
 }
 
-@Composable
-fun RoleQuickPreviewSwitcher(viewModel: DexcargoViewModel) {
-    var expanded by remember { mutableStateOf(false) }
-
-    Box {
-        Box(
-            modifier = Modifier
-                .size(44.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .background(Color(0xE61E293B))
-                .border(1.dp, DarkBorder, RoundedCornerShape(12.dp))
-                .clickable { expanded = true },
-            contentAlignment = Alignment.Center
-        ) {
-            Text("⚙️", fontSize = 16.sp)
-        }
-
-        DropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false },
-            modifier = Modifier
-                .background(Color(0xFF1E293B))
-                .border(1.dp, DarkBorder, RoundedCornerShape(8.dp))
-        ) {
-            DropdownMenuItem(
-                text = { Text("John Kamau (Sales Rep)", color = Color.White, fontSize = 12.sp) },
-                onClick = {
-                    viewModel.selectEmployeeDirect("SR-002")
-                    expanded = false
-                }
-            )
-            DropdownMenuItem(
-                text = { Text("Mary Wanjiku (Logistics Mgr)", color = Color.White, fontSize = 12.sp) },
-                onClick = {
-                    viewModel.selectEmployeeDirect("LM-001")
-                    expanded = false
-                }
-            )
-            DropdownMenuItem(
-                text = { Text("Peter Mwangi (Sales Lead)", color = Color.White, fontSize = 12.sp) },
-                onClick = {
-                    viewModel.selectEmployeeDirect("SM-001")
-                    expanded = false
-                }
-            )
-            DropdownMenuItem(
-                text = { Text("Administrator Console", color = Color.White, fontSize = 12.sp) },
-                onClick = {
-                    viewModel.selectEmployeeDirect("ADM-001")
-                    expanded = false
-                }
-            )
-            DropdownMenuItem(
-                text = { Text("Reset Sandbox Database", color = Color(0xFFF43F5E), fontSize = 12.sp, fontWeight = FontWeight.Bold) },
-                onClick = {
-                    viewModel.resetDemoData()
-                    expanded = false
-                }
-            )
-        }
-    }
-}
