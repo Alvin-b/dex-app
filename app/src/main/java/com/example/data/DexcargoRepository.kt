@@ -178,6 +178,52 @@ class DexcargoRepository(private val database: AppDatabase) {
         return null
     }
 
+    suspend fun uploadProofPhoto(filename: String, bytes: ByteArray, online: Boolean): String? {
+        if (online && SupabaseClient.accessToken != null) {
+            try {
+                val reqBody = RequestBody.create(
+                    "image/jpeg".toMediaTypeOrNull(),
+                    bytes
+                )
+                val response = SupabaseClient.api.uploadProofPhoto(
+                    apiKey = SupabaseClient.API_KEY,
+                    authHeader = SupabaseClient.getBearerHeader(),
+                    filename = filename,
+                    photoBytes = reqBody
+                )
+                if (response.isSuccessful) {
+                    return "proofs/$filename"
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+        return null
+    }
+
+    suspend fun uploadSignaturePhoto(filename: String, bytes: ByteArray, online: Boolean): String? {
+        if (online && SupabaseClient.accessToken != null) {
+            try {
+                val reqBody = RequestBody.create(
+                    "image/png".toMediaTypeOrNull(),
+                    bytes
+                )
+                val response = SupabaseClient.api.uploadSignaturePhoto(
+                    apiKey = SupabaseClient.API_KEY,
+                    authHeader = SupabaseClient.getBearerHeader(),
+                    filename = filename,
+                    photoBytes = reqBody
+                )
+                if (response.isSuccessful) {
+                    return "signatures/$filename"
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+        return null
+    }
+
     suspend fun downloadPhoto(packageId: String, filename: String): ByteArray? {
         if (SupabaseClient.accessToken == null) return null
         return try {
@@ -408,7 +454,7 @@ class DexcargoRepository(private val database: AppDatabase) {
                 weight = 2.4,
                 pcs = 2,
                 cost = 5600,
-                salesRep = "SR-002 John Kamau",
+                salesRep = "John Kamau",
                 status = "collected",
                 registeredAt = "2026-07-10 10:24 AM",
                 paidAt = "2026-07-10 11:15 AM",
@@ -430,7 +476,7 @@ class DexcargoRepository(private val database: AppDatabase) {
                 weight = 12.0,
                 pcs = 3,
                 cost = 3800,
-                salesRep = "SR-002 John Kamau",
+                salesRep = "John Kamau",
                 status = "paid",
                 registeredAt = "2026-07-11 09:12 AM",
                 paidAt = "2026-07-11 04:30 PM",
@@ -448,7 +494,7 @@ class DexcargoRepository(private val database: AppDatabase) {
                 weight = 5.6,
                 pcs = 1,
                 cost = 4200,
-                salesRep = "Sales Manager Direct",
+                salesRep = "Charles Ombongi",
                 status = "paid",
                 registeredAt = "2026-07-12 08:14 AM",
                 paidAt = "2026-07-12 09:00 AM",
@@ -466,7 +512,7 @@ class DexcargoRepository(private val database: AppDatabase) {
                 weight = 3.2,
                 pcs = 1,
                 cost = 2800,
-                salesRep = "SR-003 Grace Akinyi",
+                salesRep = "Grace Akinyi",
                 status = "registered",
                 registeredAt = "2026-07-12 09:30 AM"
             )

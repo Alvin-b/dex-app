@@ -206,7 +206,8 @@ fun ScanStickerScreen(viewModel: DexcargoViewModel) {
 
                             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                 StickerRow(lbl = "Tracking", valStr = if (selectedLabelId == 1) "1260707534987" else "126070655250")
-                                StickerRow(lbl = "Consignee", valStr = if (selectedLabelId == 1) "Beatrice Wangui" else "Charles Ombongi")
+                                StickerRow(lbl = "Consignee", valStr = if (selectedLabelId == 1) "Beatrice-Pheobe Wangui" else "Charles Ombongi")
+                                StickerRow(lbl = "Tel / Goods", valStr = "Tel: 1 / Nature: 1 (Manual Entry)")
                                 StickerRow(lbl = "Route", valStr = if (selectedLabelId == 1) "HKG to NBO" else "CAN to NBO")
                                 StickerRow(lbl = "Weight", valStr = if (selectedLabelId == 1) "1.0 kg / 1 PCS" else "0.5 kg / 1 PCS")
                             }
@@ -295,8 +296,12 @@ fun ScanStickerScreen(viewModel: DexcargoViewModel) {
                 val manualName = remember { mutableStateOf("") }
                 val manualPhone = remember { mutableStateOf("") }
                 val manualCost = remember { mutableStateOf("") }
+                val manualCbm = remember { mutableStateOf("") }
                 val manualMode = remember { mutableStateOf("Sea Freight") }
+                val manualSalesRep = remember { mutableStateOf(viewModel.getDefaultSalesRep()) }
                 var expandedDropdown by remember { mutableStateOf(false) }
+                var expandedRepDropdown by remember { mutableStateOf(false) }
+                val employeesList by viewModel.employees.collectAsState()
 
                 Column(
                     modifier = Modifier
@@ -334,6 +339,84 @@ fun ScanStickerScreen(viewModel: DexcargoViewModel) {
                         onValueChange = { manualPhone.value = it },
                         label = "Client Phone Number",
                         placeholder = "e.g. 0712345678"
+                    )
+
+                    // ASSIGNED SALES REP / EMPLOYEE IN CHARGE
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            text = "ASSIGNED EMPLOYEE (EARNS COMMISSION)",
+                            color = TextSecondary,
+                            fontSize = 9.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(bottom = 4.dp)
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            DexTextField(
+                                value = manualSalesRep.value,
+                                onValueChange = { manualSalesRep.value = it },
+                                label = "",
+                                placeholder = "e.g. John Kamau",
+                                modifier = Modifier.weight(1f)
+                            )
+                            Box {
+                                IconButton(
+                                    onClick = { expandedRepDropdown = true },
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(DarkSurfaceVariant)
+                                        .border(1.dp, DarkBorder, RoundedCornerShape(10.dp))
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.ArrowDropDown,
+                                        contentDescription = "Select Employee",
+                                        tint = OrangeAccent
+                                    )
+                                }
+                                DropdownMenu(
+                                    expanded = expandedRepDropdown,
+                                    onDismissRequest = { expandedRepDropdown = false },
+                                    modifier = Modifier.background(DarkSurfaceVariant)
+                                ) {
+                                    if (employeesList.isNotEmpty()) {
+                                        employeesList.forEach { emp ->
+                                            DropdownMenuItem(
+                                                text = { Text("${emp.name} (${emp.role.uppercase()})", color = TextPrimary, fontSize = 12.sp) },
+                                                onClick = {
+                                                    manualSalesRep.value = emp.name
+                                                    expandedRepDropdown = false
+                                                }
+                                            )
+                                        }
+                                    } else {
+                                        DropdownMenuItem(
+                                            text = { Text("John Kamau", color = TextPrimary, fontSize = 12.sp) },
+                                            onClick = {
+                                                manualSalesRep.value = "John Kamau"
+                                                expandedRepDropdown = false
+                                            }
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text("Grace Akinyi", color = TextPrimary, fontSize = 12.sp) },
+                                            onClick = {
+                                                manualSalesRep.value = "Grace Akinyi"
+                                                expandedRepDropdown = false
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    DexTextField(
+                        value = manualCbm.value,
+                        onValueChange = { manualCbm.value = it },
+                        label = "Package Size (CBM) - For Sea Freight",
+                        placeholder = "e.g. 0.05 CBM or 1.2 CBM"
                     )
 
                     DexTextField(
@@ -415,6 +498,8 @@ fun ScanStickerScreen(viewModel: DexcargoViewModel) {
                             viewModel.revWeight.value = "1.0"
                             viewModel.revPcs.value = "1"
                             viewModel.revCost.value = manualCost.value
+                            viewModel.revCbm.value = manualCbm.value
+                            viewModel.revSalesRep.value = manualSalesRep.value.ifBlank { viewModel.getDefaultSalesRep() }
 
                             // Reset photo states
                             viewModel.isPackagePhotoCaptured.value = false
@@ -533,6 +618,16 @@ fun OcrReviewScreen(viewModel: DexcargoViewModel) {
     val revWeight by viewModel.revWeight.collectAsState()
     val revPcs by viewModel.revPcs.collectAsState()
     val revCost by viewModel.revCost.collectAsState()
+    val revCbm by viewModel.revCbm.collectAsState()
+    val revSalesRep by viewModel.revSalesRep.collectAsState()
+    val employeesList by viewModel.employees.collectAsState()
+    var expandedRepDropdown by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        if (viewModel.revSalesRep.value.isBlank()) {
+            viewModel.revSalesRep.value = viewModel.getDefaultSalesRep()
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -562,7 +657,7 @@ fun OcrReviewScreen(viewModel: DexcargoViewModel) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("✔", color = GreenAccent, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                     Text(
-                        "Sticker details extracted successfully. Verify before backend submission.",
+                        "Sticker details extracted (Tracking, Name, Route, Weight, PCS). Missing sticker fields (Phone, Description, Charge KES) are left blank for manual entry.",
                         color = GreenAccent,
                         fontSize = 10.5.sp,
                         fontWeight = FontWeight.Bold
@@ -571,15 +666,86 @@ fun OcrReviewScreen(viewModel: DexcargoViewModel) {
             }
 
             DexTextField(value = revId, onValueChange = { viewModel.revId.value = it }, label = "Tracking Number (AFA ID)", placeholder = "e.g. 1260707534987")
-            DexTextField(value = revName, onValueChange = { viewModel.revName.value = it }, label = "Consignee Name", placeholder = "Client Name")
-            DexTextField(value = revPhone, onValueChange = { viewModel.revPhone.value = it }, label = "Consignee Phone", placeholder = "Phone number")
+            DexTextField(value = revName, onValueChange = { viewModel.revName.value = it }, label = "Consignee Name", placeholder = "Client Name e.g. Beatrice-Pheobe Wangui")
+            DexTextField(value = revPhone, onValueChange = { viewModel.revPhone.value = it }, label = "Consignee Phone (Required - Manual Entry)", placeholder = "Enter client phone e.g. 0712345678")
+
+            // ASSIGNED SALES REP / EMPLOYEE IN CHARGE
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = "ASSIGNED EMPLOYEE (COMMISSION ALLOCATION)",
+                    color = TextSecondary,
+                    fontSize = 9.5.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(bottom = 4.dp)
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    DexTextField(
+                        value = revSalesRep,
+                        onValueChange = { viewModel.revSalesRep.value = it },
+                        label = "",
+                        placeholder = "e.g. John Kamau",
+                        modifier = Modifier.weight(1f)
+                    )
+                    Box {
+                        IconButton(
+                            onClick = { expandedRepDropdown = true },
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(DarkSurfaceVariant)
+                                .border(1.dp, DarkBorder, RoundedCornerShape(10.dp))
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ArrowDropDown,
+                                contentDescription = "Select Employee",
+                                tint = OrangeAccent
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = expandedRepDropdown,
+                            onDismissRequest = { expandedRepDropdown = false },
+                            modifier = Modifier.background(DarkSurfaceVariant)
+                        ) {
+                            if (employeesList.isNotEmpty()) {
+                                employeesList.forEach { emp ->
+                                    DropdownMenuItem(
+                                        text = { Text("${emp.name} (${emp.role.uppercase()})", color = TextPrimary, fontSize = 12.sp) },
+                                        onClick = {
+                                            viewModel.revSalesRep.value = emp.name
+                                            expandedRepDropdown = false
+                                        }
+                                    )
+                                }
+                            } else {
+                                DropdownMenuItem(
+                                    text = { Text("John Kamau", color = TextPrimary, fontSize = 12.sp) },
+                                    onClick = {
+                                        viewModel.revSalesRep.value = "John Kamau"
+                                        expandedRepDropdown = false
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Grace Akinyi", color = TextPrimary, fontSize = 12.sp) },
+                                    onClick = {
+                                        viewModel.revSalesRep.value = "Grace Akinyi"
+                                        expandedRepDropdown = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                DexTextField(value = revOrigin, onValueChange = { viewModel.revOrigin.value = it }, label = "Origin Hub", placeholder = "CAN", modifier = Modifier.weight(1f))
+                DexTextField(value = revOrigin, onValueChange = { viewModel.revOrigin.value = it }, label = "Origin Hub", placeholder = "HKG / CAN", modifier = Modifier.weight(1f))
                 DexTextField(value = revDest, onValueChange = { viewModel.revDest.value = it }, label = "Destination", placeholder = "NBO", modifier = Modifier.weight(1f))
             }
 
-            DexTextField(value = revDesc, onValueChange = { viewModel.revDesc.value = it }, label = "Cargo Description", placeholder = "Description of goods")
+            DexTextField(value = revDesc, onValueChange = { viewModel.revDesc.value = it }, label = "Cargo Description (Manual Entry)", placeholder = "Enter cargo description e.g. Women's Shoes")
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1.5f)) {
@@ -605,7 +771,14 @@ fun OcrReviewScreen(viewModel: DexcargoViewModel) {
                 DexTextField(value = revPcs, onValueChange = { viewModel.revPcs.value = it }, label = "Pieces", placeholder = "1", modifier = Modifier.weight(1f))
             }
 
-            DexTextField(value = revCost, onValueChange = { viewModel.revCost.value = it }, label = "Charge Amount (KES)", placeholder = "3000")
+            DexTextField(value = revCost, onValueChange = { viewModel.revCost.value = it }, label = "Charge Amount KES (Required - Manual Entry)", placeholder = "Enter price in KES e.g. 4200")
+
+            DexTextField(
+                value = revCbm,
+                onValueChange = { viewModel.revCbm.value = it },
+                label = if (revMode == "Sea Freight") "Package Size in CBM (Sea Cargo)" else "Package Size / Volume (CBM)",
+                placeholder = "e.g. 0.05 CBM or 1.2 CBM"
+            )
 
             Spacer(modifier = Modifier.height(10.dp))
 
@@ -644,9 +817,9 @@ fun TakePackagePhotoScreen(viewModel: DexcargoViewModel) {
     val context = LocalContext.current
     val revId by viewModel.revId.collectAsState()
 
-    // Automatically trigger the camera on entering the screen
+    // Automatically trigger the camera on entering the screen if not already captured
     LaunchedEffect(Unit) {
-        if (!isCaptured) {
+        if (!isCaptured && capturedBitmap == null) {
             viewModel.triggerPackageCameraEvent.tryEmit(Unit)
         }
     }
@@ -657,7 +830,7 @@ fun TakePackagePhotoScreen(viewModel: DexcargoViewModel) {
             .background(DarkBg)
     ) {
         ScreenHeader(
-            title = "Take Package Photo",
+            title = "Capture Package Photo",
             onBack = { viewModel.navigateBack() }
         )
 
@@ -667,68 +840,64 @@ fun TakePackagePhotoScreen(viewModel: DexcargoViewModel) {
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // CAMERA SCREEN VIEWFINDER
+            // CAMERA VIEWPORT
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(240.dp)
+                    .height(250.dp)
                     .clip(RoundedCornerShape(18.dp))
                     .background(Color(0xFF0F111A))
-                    .border(1.dp, DarkBorder, RoundedCornerShape(18.dp)),
+                    .border(1.dp, if (isCaptured) GreenAccent else DarkBorder, RoundedCornerShape(18.dp)),
                 contentAlignment = Alignment.Center
             ) {
-                if (isCaptured) {
-                    if (capturedBitmap != null) {
-                        androidx.compose.foundation.Image(
-                            bitmap = capturedBitmap!!.asImageBitmap(),
-                            contentDescription = "Captured Package Photo",
-                            modifier = Modifier.fillMaxSize(),
-                            contentScale = androidx.compose.ui.layout.ContentScale.Crop
-                        )
-                    } else {
-                        // Display box photo captured (simulated fallback representation)
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .background(Color(0xFF252A42)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text("📦", fontSize = 42.sp)
-                                Text(
-                                    "PHOTO CAPTURED: PKG-BOX-A",
-                                    color = BlueAccent,
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.ExtraBold,
-                                    fontFamily = FontFamily.Monospace
-                                )
-                            }
+                if (isCaptured && capturedBitmap != null) {
+                    androidx.compose.foundation.Image(
+                        bitmap = capturedBitmap!!.asImageBitmap(),
+                        contentDescription = "Captured Package Photo",
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                    )
+
+                    // Overlay badge
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(12.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color.Black.copy(alpha = 0.7f))
+                            .padding(horizontal = 10.dp, vertical = 6.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text("✅", fontSize = 12.sp)
+                            Text("PHOTO CAPTURED", color = GreenAccent, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 } else {
-                    // Display drawing coordinates box
-                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Canvas(modifier = Modifier.size(80.dp)) {
-                            val boxSize = size.width
-                            drawRoundRect(
-                                color = TextSecondary,
-                                size = size,
-                                cornerRadius = CornerRadius(10.dp.toPx()),
-                                style = Stroke(width = 2.dp.toPx())
-                            )
-                            drawLine(
-                                color = OrangeAccent,
-                                start = Offset(boxSize * 0.2f, boxSize * 0.35f),
-                                end = Offset(boxSize * 0.8f, boxSize * 0.35f),
-                                strokeWidth = 3.dp.toPx()
-                            )
-                        }
+                    // Display camera prompt
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        modifier = Modifier.padding(16.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.PhotoCamera,
+                            contentDescription = "Camera Icon",
+                            tint = OrangeAccent,
+                            modifier = Modifier.size(48.dp)
+                        )
                         Text(
-                            "LIVE VIEWPORT: FOCUS ON BOX",
-                            color = TextMuted,
-                            fontSize = 10.sp,
+                            text = "NO PACKAGE PHOTO CAPTURED YET",
+                            color = TextSecondary,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
                             fontFamily = FontFamily.Monospace,
-                            letterSpacing = 1.sp
+                            letterSpacing = 0.5.sp
+                        )
+                        Text(
+                            text = "Tap 'Open Camera' or 'Choose Gallery' below to capture a clear photo of the physical package.",
+                            color = TextMuted,
+                            fontSize = 11.sp,
+                            textAlign = TextAlign.Center
                         )
                     }
                 }
@@ -745,66 +914,46 @@ fun TakePackagePhotoScreen(viewModel: DexcargoViewModel) {
             }
 
             Text(
-                "Align the package and sticker label clearly in the frame, then press the camera snap trigger.",
-                color = TextSecondary,
-                fontSize = 10.5.sp,
+                text = "Tracking ID: $revId",
+                color = OrangeAccent,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                fontFamily = FontFamily.Monospace,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth()
             )
 
-            // SNAP TRIGGERS
+            // CAPTURE OPTIONS
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                IconButton(
-                    onClick = {
-                        // Simulated/Real Flash toggle
-                        Toast.makeText(context, "Flash enabled", Toast.LENGTH_SHORT).show()
-                    },
-                    modifier = Modifier
-                        .size(44.dp)
-                        .clip(CircleShape)
-                        .background(DarkSurfaceVariant)
-                ) {
-                    Icon(Icons.Default.FlashOn, "Flash", tint = OrangeAccent)
-                }
-
-                Spacer(modifier = Modifier.width(24.dp))
-
-                Box(
-                    modifier = Modifier
-                        .size(68.dp)
-                        .border(4.dp, Color.White, CircleShape)
-                        .padding(4.dp)
-                        .clip(CircleShape)
-                        .background(if (isCaptured) Color.Gray else Color.White)
-                        .clickable {
-                            if (!isCaptured) {
-                                viewModel.triggerPackageCameraEvent.tryEmit(Unit)
-                            }
-                        }
-                )
-
-                Spacer(modifier = Modifier.width(24.dp))
-
-                IconButton(
+                DexButton(
+                    text = if (isCaptured) "📷 Retake Camera Photo" else "📷 Open Camera",
                     onClick = {
                         viewModel.isPackagePhotoCaptured.value = false
                         viewModel.capturedPackageBitmap.value = null
-                        viewModel.capturedPhotoUrl.value = ""
+                        viewModel.triggerPackageCameraEvent.tryEmit(Unit)
                     },
-                    modifier = Modifier
-                        .size(44.dp)
-                        .clip(CircleShape)
-                        .background(DarkSurfaceVariant)
-                ) {
-                    Icon(Icons.Default.Refresh, "Reset", tint = TextSecondary)
-                }
+                    style = OrangeAccent,
+                    textColor = Color(0xFF1A1200),
+                    modifier = Modifier.weight(1f)
+                )
+
+                DexButton(
+                    text = "🖼️ Gallery",
+                    onClick = {
+                        viewModel.isPackagePhotoCaptured.value = false
+                        viewModel.capturedPackageBitmap.value = null
+                        viewModel.triggerEvidenceGalleryEvent.tryEmit(Unit)
+                    },
+                    style = DarkSurfaceVariant,
+                    textColor = TextPrimary,
+                    modifier = Modifier.weight(1f)
+                )
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(6.dp))
 
             DexButton(
                 text = "Register Package to Hub",

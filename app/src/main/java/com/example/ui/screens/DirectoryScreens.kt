@@ -311,7 +311,7 @@ fun PackageDetailsScreen(viewModel: DexcargoViewModel) {
                     DetailsRow(lbl = "Shipping Method", value = pkg.mode)
                     DetailsRow(lbl = "Weight / PCS", value = "${pkg.weight} kg / ${pkg.pcs} Pieces")
                     DetailsRow(lbl = "Description of Goods", value = pkg.desc)
-                    DetailsRow(lbl = "Registry Agent ID", value = pkg.salesRep)
+                    DetailsRow(lbl = "Sales Representative", value = pkg.salesRep)
                     DetailsRow(lbl = "Total Charges", value = "KES ${pkg.cost.toLocaleString()}", valueColor = OrangeAccent, isBoldValue = true)
                 }
             }

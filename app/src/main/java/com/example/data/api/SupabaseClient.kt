@@ -353,6 +353,24 @@ interface SupabaseApi {
         @Body photoBytes: RequestBody
     ): Response<Unit>
 
+    @POST("storage/v1/object/proofs/{filename}")
+    suspend fun uploadProofPhoto(
+        @Header("apikey") apiKey: String,
+        @Header("Authorization") authHeader: String,
+        @Header("Content-Type") contentType: String = "image/jpeg",
+        @Path("filename") filename: String,
+        @Body photoBytes: RequestBody
+    ): Response<Unit>
+
+    @POST("storage/v1/object/signatures/{filename}")
+    suspend fun uploadSignaturePhoto(
+        @Header("apikey") apiKey: String,
+        @Header("Authorization") authHeader: String,
+        @Header("Content-Type") contentType: String = "image/png",
+        @Path("filename") filename: String,
+        @Body photoBytes: RequestBody
+    ): Response<Unit>
+
     @GET("storage/v1/object/package-photos/{packageId}/{filename}")
     suspend fun downloadPackagePhoto(
         @Header("apikey") apiKey: String,

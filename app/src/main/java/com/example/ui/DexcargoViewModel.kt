@@ -320,6 +320,14 @@ class DexcargoViewModel(
     val revWeight = MutableStateFlow("1.0")
     val revPcs = MutableStateFlow("1")
     val revCost = MutableStateFlow("4200")
+    val revCbm = MutableStateFlow("")
+    val revSalesRep = MutableStateFlow("")
+    val loginErrorMessage = MutableStateFlow<String?>(null)
+
+    fun getDefaultSalesRep(): String {
+        val emp = currentEmployee.value
+        return emp?.name ?: "John Kamau"
+    }
 
     // Upload payload form
     val mockImageSelect = MutableStateFlow("mpesa_mock_1.png")
@@ -346,6 +354,11 @@ class DexcargoViewModel(
     // --- CORE OPERATIONS ---
 
     fun login(email: String, pass: String): Boolean {
+        loginErrorMessage.value = null
+        if (email.isBlank() || pass.isBlank()) {
+            loginErrorMessage.value = "Either password or email is wrong. Please try again."
+            return false
+        }
         viewModelScope.launch {
             _syncStatusMessage.value = "Authenticating with Supabase..."
             val result = authRepository.signIn(email, pass)
@@ -354,6 +367,7 @@ class DexcargoViewModel(
                 val employee = result.getOrNull()
                 _currentEmployee.value = employee
                 _syncStatusMessage.value = "Login successful"
+                loginErrorMessage.value = null
                 
                 // Trigger autoSyncPackages to sync local pending and fetch server database
                 autoSyncPackages()
@@ -371,7 +385,7 @@ class DexcargoViewModel(
                 }
             } else {
                 _syncStatusMessage.value = "Authentication failed"
-                pinErrorMessage.value = result.exceptionOrNull()?.message ?: "Invalid email or password"
+                loginErrorMessage.value = "Either password or email is wrong. Please try again."
             }
         }
         return true
@@ -486,14 +500,29 @@ class DexcargoViewModel(
     }
 
     fun triggerOcrScan(customBitmap: android.graphics.Bitmap? = null, onFinish: () -> Unit = {}) {
-        isPackagePhotoCaptured.value = customBitmap != null
-        capturedPhotoUrl.value = if (customBitmap != null) "captured_camera_uri" else ""
+        isPackagePhotoCaptured.value = false
+        capturedPackageBitmap.value = null
+        capturedPhotoUrl.value = ""
+
+        if (customBitmap != null) {
+            revId.value = ""
+            revName.value = ""
+            revPhone.value = ""
+            revOrigin.value = ""
+            revDest.value = ""
+            revDesc.value = ""
+            revWeight.value = ""
+            revPcs.value = "1"
+            revCost.value = ""
+            revCbm.value = ""
+        }
+
         navigateTo(Screen.OcrProcessing)
 
         viewModelScope.launch {
             val labelId = selectedLabelId.value
             val bitmap = customBitmap ?: GeminiOcrHelper.generateStickerBitmap(labelId)
-            val extracted = GeminiOcrHelper.extractStickerData(bitmap, labelId)
+            val extracted = GeminiOcrHelper.extractStickerData(bitmap, labelId, isCustomPhoto = customBitmap != null)
 
             revId.value = extracted.trackingNumber
             revName.value = extracted.consigneeName
@@ -512,8 +541,8 @@ class DexcargoViewModel(
     fun savePackageRegistry() {
         val actor = currentEmployee.value?.id ?: "System"
         val roleLabel = when (currentEmployee.value?.role) {
-            "sr" -> "${currentEmployee.value?.id ?: "SR-002"} ${currentEmployee.value?.name ?: "John Kamau"}"
-            else -> "Sales Manager Direct"
+            "sr" -> currentEmployee.value?.name ?: "John Kamau"
+            else -> currentEmployee.value?.name ?: "Charles Ombongi"
         }
 
         val online = isOnline.value
@@ -542,18 +571,23 @@ class DexcargoViewModel(
                 }
             }
 
+            val baseDesc = revDesc.value.ifBlank { "General Goods" }
+            val finalDescription = if (revCbm.value.isNotBlank()) {
+                if (baseDesc.contains("CBM", ignoreCase = true)) baseDesc else "$baseDesc [Volume: ${revCbm.value} CBM]"
+            } else baseDesc
+
             val pkg = CargoPackage(
                 id = revId.value,
                 consignee = revName.value,
                 phone = revPhone.value,
                 origin = revOrigin.value,
                 dest = revDest.value,
-                desc = revDesc.value,
+                desc = finalDescription,
                 mode = revMode.value,
                 weight = revWeight.value.toDoubleOrNull() ?: 1.0,
                 pcs = revPcs.value.toIntOrNull() ?: 1,
                 cost = revCost.value.toIntOrNull() ?: 3000,
-                salesRep = roleLabel,
+                salesRep = revSalesRep.value.ifBlank { getDefaultSalesRep() },
                 status = "registered",
                 registeredAt = getNowTimestamp(),
                 packagePhotoUrl = finalPhotoUrl,
@@ -594,8 +628,8 @@ class DexcargoViewModel(
     fun saveManualPackageRegistry() {
         val actor = currentEmployee.value?.id ?: "System"
         val roleLabel = when (currentEmployee.value?.role) {
-            "sr" -> "${currentEmployee.value?.id ?: "SR-002"} ${currentEmployee.value?.name ?: "John Kamau"}"
-            else -> "Sales Manager Direct"
+            "sr" -> currentEmployee.value?.name ?: "John Kamau"
+            else -> currentEmployee.value?.name ?: "Charles Ombongi"
         }
 
         val routeVal = mformRoute.value
@@ -722,21 +756,36 @@ class DexcargoViewModel(
             "0722" + (100000 + Random().nextInt(900000))
         } else null
 
-        val notif = PaymentNotification(
-            id = "PN-" + System.currentTimeMillis(),
-            notificationNumber = notifNumber,
-            evidenceType = activeUploadType.value,
-            imageUrl = if (isImage) mockImageSelect.value else null,
-            textContent = mockTextContent.value,
-            uploadedBy = "$actor (${currentEmployee.value?.name})",
-            uploadedAt = getNowTimestamp(),
-            status = "PENDING",
-            amount = parsedAmount,
-            senderPhone = parsedPhone,
-            timestamp = getNowTimestamp()
-        )
-
         viewModelScope.launch {
+            var finalImageUrl: String? = if (isImage) mockImageSelect.value else null
+            if (isImage && !finalImageUrl.isNullOrEmpty() && finalImageUrl.startsWith("base64:")) {
+                try {
+                    val rawBase64 = finalImageUrl.removePrefix("base64:")
+                    val decodedBytes = android.util.Base64.decode(rawBase64, android.util.Base64.DEFAULT)
+                    val filename = "proof_${System.currentTimeMillis()}.jpg"
+                    val storagePath = repository.uploadProofPhoto(filename, decodedBytes, isOnline.value)
+                    if (storagePath != null) {
+                        finalImageUrl = storagePath
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+
+            val notif = PaymentNotification(
+                id = "PN-" + System.currentTimeMillis(),
+                notificationNumber = notifNumber,
+                evidenceType = activeUploadType.value,
+                imageUrl = finalImageUrl,
+                textContent = mockTextContent.value,
+                uploadedBy = "$actor (${currentEmployee.value?.name})",
+                uploadedAt = getNowTimestamp(),
+                status = "PENDING",
+                amount = parsedAmount,
+                senderPhone = parsedPhone,
+                timestamp = getNowTimestamp()
+            )
+
             repository.insertNotification(notif, online = isOnline.value)
             repository.insertLog(
                 AuditLog(

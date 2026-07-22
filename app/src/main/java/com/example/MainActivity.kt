@@ -99,8 +99,7 @@ class MainActivity : FragmentActivity() {
                         val intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
                         startActivityForResult(intent, 104)
                     } catch (e: Exception) {
-                        val simBitmap = viewModel.generateSimulatedPackageBitmap(viewModel.revId.value)
-                        viewModel.onPackagePhotoCaptured(simBitmap)
+                        android.widget.Toast.makeText(this@MainActivity, "Could not open camera: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
                     }
                 } else {
                     requestPermissions(arrayOf(android.Manifest.permission.CAMERA), 103)
@@ -234,13 +233,10 @@ class MainActivity : FragmentActivity() {
                     val intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
                     startActivityForResult(intent, 104)
                 } catch (e: Exception) {
-                    val simBitmap = viewModel.generateSimulatedPackageBitmap(viewModel.revId.value)
-                    viewModel.onPackagePhotoCaptured(simBitmap)
+                    android.widget.Toast.makeText(this, "Could not open camera.", android.widget.Toast.LENGTH_SHORT).show()
                 }
             } else {
-                val simBitmap = viewModel.generateSimulatedPackageBitmap(viewModel.revId.value)
-                viewModel.onPackagePhotoCaptured(simBitmap)
-                android.widget.Toast.makeText(this, "Camera permission denied. Using simulated photo.", android.widget.Toast.LENGTH_SHORT).show()
+                android.widget.Toast.makeText(this, "Camera permission is required to take package photos.", android.widget.Toast.LENGTH_SHORT).show()
             }
         } else if (requestCode == 105) {
             if (granted) {
@@ -266,7 +262,11 @@ class MainActivity : FragmentActivity() {
                         val inputStream = contentResolver.openInputStream(uri)
                         val bitmap = android.graphics.BitmapFactory.decodeStream(inputStream)
                         if (bitmap != null) {
-                            viewModel.onEvidencePhotoCaptured(bitmap)
+                            if (viewModel.currentScreen.value is Screen.TakePackagePhoto) {
+                                viewModel.onPackagePhotoCaptured(bitmap)
+                            } else {
+                                viewModel.onEvidencePhotoCaptured(bitmap)
+                            }
                         } else {
                             android.widget.Toast.makeText(this, "Could not load image", android.widget.Toast.LENGTH_SHORT).show()
                         }
@@ -296,11 +296,9 @@ class MainActivity : FragmentActivity() {
 
     private fun handleCameraFallback(requestCode: Int) {
         if (requestCode == 102) {
-            android.widget.Toast.makeText(this, "No photo captured", android.widget.Toast.LENGTH_SHORT).show()
+            android.widget.Toast.makeText(this, "No sticker photo captured", android.widget.Toast.LENGTH_SHORT).show()
         } else if (requestCode == 104) {
-            val simBitmap = viewModel.generateSimulatedPackageBitmap(viewModel.revId.value)
-            viewModel.onPackagePhotoCaptured(simBitmap)
-            android.widget.Toast.makeText(this, "Using simulated high-fidelity package photo.", android.widget.Toast.LENGTH_SHORT).show()
+            android.widget.Toast.makeText(this, "No package photo captured. Please tap 'Snap Package Photo' to open camera.", android.widget.Toast.LENGTH_SHORT).show()
         } else if (requestCode == 106) {
             android.widget.Toast.makeText(this, "No photo captured", android.widget.Toast.LENGTH_SHORT).show()
         }

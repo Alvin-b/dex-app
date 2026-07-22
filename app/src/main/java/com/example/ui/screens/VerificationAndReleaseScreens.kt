@@ -378,11 +378,11 @@ fun CommissionsScreen(viewModel: DexcargoViewModel) {
     }
 
     val clearedPackages = remember(packages) {
-        packages.filter { it.status != "registered" }
+        packages.filter { it.status == "collected" }
     }
 
-    val (earned, paid, outstanding) = remember(filteredCommissions, activeFilter, isOnline) {
-        if (isOnline && filteredCommissions.isNotEmpty()) {
+    val (earned, paid, outstanding) = remember(filteredCommissions, clearedPackages, activeFilter, isOnline) {
+        if (filteredCommissions.isNotEmpty()) {
             val filtered = when (activeFilter) {
                 "month" -> filteredCommissions
                 "last" -> filteredCommissions.filter { it.status.equals("paid", ignoreCase = true) }
@@ -393,11 +393,10 @@ fun CommissionsScreen(viewModel: DexcargoViewModel) {
             val outstandingAmt = total - paidAmt
             Triple(total, paidAmt, outstandingAmt)
         } else {
-            when (activeFilter) {
-                "month" -> Triple(24680, 12400, 12280)
-                "last" -> Triple(20870, 20870, 0)
-                else -> Triple(82450, 70170, 12280)
-            }
+            val total = clearedPackages.sumOf { (it.cost * 0.10).toInt() }
+            val paidAmt = clearedPackages.filter { it.status == "collected" || it.status == "cleared" }.sumOf { (it.cost * 0.10).toInt() }
+            val outstandingAmt = total - paidAmt
+            Triple(total, paidAmt, outstandingAmt)
         }
     }
 
@@ -450,7 +449,7 @@ fun CommissionsScreen(viewModel: DexcargoViewModel) {
                     )
                     employees.forEach { emp ->
                         DropdownMenuItem(
-                            text = { Text("${emp.name} (${emp.id})", color = TextPrimary, fontSize = 12.sp) },
+                            text = { Text(emp.name, color = TextPrimary, fontSize = 12.sp) },
                             onClick = {
                                 selectedEmployeeId = emp.id
                                 dropdownExpanded = false

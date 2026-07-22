@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -8,6 +9,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -34,6 +36,7 @@ import com.example.ui.theme.*
 fun LoginScreen(viewModel: DexcargoViewModel) {
     val empRegEmailState = remember { mutableStateOf("") }
     val empRegPassState = remember { mutableStateOf("") }
+    val loginError by viewModel.loginErrorMessage.collectAsState()
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -78,10 +81,44 @@ fun LoginScreen(viewModel: DexcargoViewModel) {
 
             Spacer(modifier = Modifier.weight(0.5f))
 
+            // ERROR BANNER IF LOGIN FAILS
+            if (!loginError.isNullOrEmpty()) {
+                Surface(
+                    color = Color(0xFF3B1010),
+                    shape = RoundedCornerShape(10.dp),
+                    border = BorderStroke(1.dp, RedAccent),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.ErrorOutline,
+                            contentDescription = "Error",
+                            tint = RedAccent,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Text(
+                            text = loginError!!,
+                            color = RedAccent,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+
             // EMAIL / ID INPUT
             DexTextField(
                 value = empRegEmailState.value,
-                onValueChange = { empRegEmailState.value = it },
+                onValueChange = {
+                    empRegEmailState.value = it
+                    viewModel.loginErrorMessage.value = null
+                },
                 label = "Employee Email / ID",
                 placeholder = "john@dexcargo.com",
                 testTag = "login_emp_id"
@@ -92,7 +129,10 @@ fun LoginScreen(viewModel: DexcargoViewModel) {
             // PASSWORD
             DexTextField(
                 value = empRegPassState.value,
-                onValueChange = { empRegPassState.value = it },
+                onValueChange = {
+                    empRegPassState.value = it
+                    viewModel.loginErrorMessage.value = null
+                },
                 label = "Password",
                 placeholder = "••••••••",
                 visualTransformation = PasswordVisualTransformation(),

@@ -271,6 +271,27 @@ fun EnterPinScreen(viewModel: DexcargoViewModel) {
     val enteredPin by viewModel.enteredPin.collectAsState()
     val errorMsg by viewModel.pinErrorMessage.collectAsState()
     val context = LocalContext.current
+    val activity = context as? androidx.fragment.app.FragmentActivity
+
+    fun triggerBiometricPrompt() {
+        if (activity != null && quickEmp?.biometricEnabled == true) {
+            triggerRealBiometric(
+                activity = activity,
+                onSuccess = {
+                    viewModel.loginWithBiometrics()
+                },
+                onFallback = { err ->
+                    viewModel.pinErrorMessage.value = if (err.contains("PIN", ignoreCase = true) || err.contains("cancel", ignoreCase = true) || err.contains("negative", ignoreCase = true)) "" else err
+                }
+            )
+        }
+    }
+
+    LaunchedEffect(quickEmp) {
+        if (quickEmp?.biometricEnabled == true) {
+            triggerBiometricPrompt()
+        }
+    }
 
     fun onKeyClick(key: String) {
         if (enteredPin.length < 4) {
@@ -327,7 +348,7 @@ fun EnterPinScreen(viewModel: DexcargoViewModel) {
         Spacer(modifier = Modifier.height(4.dp))
 
         Text(
-            text = "Enter Quick-Access PIN",
+            text = if (quickEmp?.biometricEnabled == true) "Scan Biometric or Enter 4-Digit PIN" else "Enter Quick-Access PIN",
             color = TextSecondary,
             fontSize = 12.sp,
             fontWeight = FontWeight.Medium,
@@ -335,6 +356,36 @@ fun EnterPinScreen(viewModel: DexcargoViewModel) {
         )
 
         Spacer(modifier = Modifier.weight(1f))
+
+        // BIOMETRIC QUICK BUTTON (IF ENABLED)
+        if (quickEmp?.biometricEnabled == true) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center,
+                modifier = Modifier
+                    .fillMaxWidth(0.85f)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(BlueAccent.copy(alpha = 0.15f))
+                    .border(1.dp, BlueAccent.copy(alpha = 0.4f), RoundedCornerShape(12.dp))
+                    .clickable { triggerBiometricPrompt() }
+                    .padding(vertical = 12.dp, horizontal = 16.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Fingerprint,
+                    contentDescription = "Scan Fingerprint",
+                    tint = OrangeAccent,
+                    modifier = Modifier.size(24.dp)
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                Text(
+                    text = "Tap to Scan Fingerprint / Face",
+                    color = TextPrimary,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+        }
 
         // DOTS INDICATORS
         Row(
@@ -369,10 +420,10 @@ fun EnterPinScreen(viewModel: DexcargoViewModel) {
                 modifier = Modifier.padding(vertical = 4.dp)
             )
         } else {
-            Spacer(modifier = Modifier.height(20.dp))
+            Spacer(modifier = Modifier.height(16.dp))
         }
 
-        Spacer(modifier = Modifier.height(30.dp))
+        Spacer(modifier = Modifier.height(20.dp))
 
         // NUMERIC KEYPAD
         NumericKeypad(

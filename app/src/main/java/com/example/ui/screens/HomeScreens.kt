@@ -36,16 +36,23 @@ fun SalesRepHomeScreen(viewModel: DexcargoViewModel) {
     val currentEmp by viewModel.currentEmployee.collectAsState()
     val packages by viewModel.cargoPackages.collectAsState()
     val alerts by viewModel.broadcastMessages.collectAsState()
+    val backendCommissions by viewModel.backendCommissions.collectAsState()
 
     val myPackages = remember(packages, currentEmp) {
-        val currentId = currentEmp?.id ?: "SR-002"
-        packages.filter { it.salesRep.contains(currentId) }
+        val currentId = currentEmp?.id ?: ""
+        if (currentId.isBlank()) packages else packages.filter { it.salesRep.contains(currentId, ignoreCase = true) || it.salesRep.contains(currentEmp?.name ?: "", ignoreCase = true) }
     }
 
     val totalCost = remember(myPackages) {
-        myPackages.filter { it.status != "registered" }.sumOf { it.cost }
+        myPackages.filter { it.status == "collected" }.sumOf { it.cost }
     }
-    val commissionAmount = 24680 + (totalCost * 0.1).toInt()
+    val commissionAmount = remember(backendCommissions, myPackages) {
+        if (backendCommissions.isNotEmpty()) {
+            backendCommissions.filter { it.employeeId == currentEmp?.id }.sumOf { it.amount }.toInt()
+        } else {
+            (totalCost * 0.10).toInt()
+        }
+    }
 
     val regCount = myPackages.count { it.status == "registered" }
     val paidCount = myPackages.count { it.status == "paid" }
@@ -62,6 +69,10 @@ fun SalesRepHomeScreen(viewModel: DexcargoViewModel) {
         NotificationsDialog(messages = myAlerts, onDismiss = { showNotificationsDialog = false })
     }
 
+    val empName = currentEmp?.name ?: "Sales Representative"
+    val empId = currentEmp?.id ?: "SR"
+    val empInitials = empName.split(" ").mapNotNull { it.firstOrNull()?.uppercase() }.take(2).joinToString("")
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -71,11 +82,11 @@ fun SalesRepHomeScreen(viewModel: DexcargoViewModel) {
         // TOP PROFILE BAR
         item {
             EmployeeProfileBar(
-                name = currentEmp?.name ?: "John Kamau",
+                name = empName,
                 roleLabel = "Sales Representative",
-                id = currentEmp?.id ?: "SR-002",
+                id = empId,
                 badgeColor = OrangeAccent,
-                initials = "JK",
+                initials = if (empInitials.isNotBlank()) empInitials else "SR",
                 notificationCount = myAlerts.size,
                 onNotificationClick = { showNotificationsDialog = true },
                 onProfileClick = { viewModel.navigateTo(Screen.ProfileSettings) }
@@ -211,11 +222,18 @@ fun LogisticsManagerHomeScreen(viewModel: DexcargoViewModel) {
     val currentEmp by viewModel.currentEmployee.collectAsState()
     val packages by viewModel.cargoPackages.collectAsState()
     val alerts by viewModel.broadcastMessages.collectAsState()
+    val backendCommissions by viewModel.backendCommissions.collectAsState()
 
     val totalCost = remember(packages) {
-        packages.sumOf { 300 } // flat KES 300 per sorting override
+        packages.size * 300 // KES 300 per sorted package
     }
-    val sortingCommission = 36540 + totalCost
+    val sortingCommission = remember(backendCommissions, packages) {
+        if (backendCommissions.isNotEmpty()) {
+            backendCommissions.filter { it.employeeId == currentEmp?.id }.sumOf { it.amount }.toInt()
+        } else {
+            totalCost
+        }
+    }
 
     val totalManaged = packages.size
     val unpaidCount = packages.count { it.status == "registered" }
@@ -232,6 +250,10 @@ fun LogisticsManagerHomeScreen(viewModel: DexcargoViewModel) {
         NotificationsDialog(messages = myAlerts, onDismiss = { showNotificationsDialog = false })
     }
 
+    val empName = currentEmp?.name ?: "Logistics Manager"
+    val empId = currentEmp?.id ?: "LM"
+    val empInitials = empName.split(" ").mapNotNull { it.firstOrNull()?.uppercase() }.take(2).joinToString("")
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -240,11 +262,11 @@ fun LogisticsManagerHomeScreen(viewModel: DexcargoViewModel) {
     ) {
         item {
             EmployeeProfileBar(
-                name = currentEmp?.name ?: "Mary Wanjiku",
+                name = empName,
                 roleLabel = "Logistics Manager",
-                id = currentEmp?.id ?: "LM-001",
+                id = empId,
                 badgeColor = BlueAccent,
-                initials = "MW",
+                initials = if (empInitials.isNotBlank()) empInitials else "LM",
                 notificationCount = myAlerts.size,
                 onNotificationClick = { showNotificationsDialog = true },
                 onProfileClick = { viewModel.navigateTo(Screen.ProfileSettings) }
@@ -424,20 +446,22 @@ fun SalesManagerHomeScreen(viewModel: DexcargoViewModel) {
     val currentEmp by viewModel.currentEmployee.collectAsState()
     val packages by viewModel.cargoPackages.collectAsState()
     val alerts by viewModel.broadcastMessages.collectAsState()
+    val employeesList by viewModel.employees.collectAsState()
+    val backendCommissions by viewModel.backendCommissions.collectAsState()
 
-    val johnPackages = remember(packages) {
-        packages.filter { it.salesRep.contains("SR-002") && it.status != "registered" }
+    val totalPaidRevenue = remember(packages) {
+        packages.filter { it.status != "registered" }.sumOf { it.cost }
     }
-    val dynamicJohnCom = johnPackages.sumOf { it.cost * 0.1 }
-    val dynamicMaryCom = packages.size * 300
+    val smCommission = remember(backendCommissions, packages) {
+        if (backendCommissions.isNotEmpty()) {
+            backendCommissions.filter { it.employeeId == currentEmp?.id }.sumOf { it.amount }.toInt()
+        } else {
+            (totalPaidRevenue * 0.05).toInt() + (packages.size * 50)
+        }
+    }
 
-    // Peter earns base KES 58,920 + 5% override on John's dynamic commissions + 5% Mary Sorting
-    val baseSM = 58920
-    val dynamicSM = (dynamicJohnCom * 0.5) + (dynamicMaryCom * 0.2)
-    val smCommission = baseSM + dynamicSM
-
-    val totalTeamPackages = 245 + packages.size - 4
-    val revenueM = 1.2 + (johnPackages.sumOf { it.cost } / 1000000.0)
+    val totalTeamPackages = packages.size
+    val salesRepsCount = employeesList.count { it.role == "sr" }
 
     val myAlerts = remember(alerts) {
         alerts.filter { it.target == "all" || it.target == "sm" }
@@ -449,6 +473,10 @@ fun SalesManagerHomeScreen(viewModel: DexcargoViewModel) {
         NotificationsDialog(messages = myAlerts, onDismiss = { showNotificationsDialog = false })
     }
 
+    val empName = currentEmp?.name ?: "Sales Manager"
+    val empId = currentEmp?.id ?: "SM"
+    val empInitials = empName.split(" ").mapNotNull { it.firstOrNull()?.uppercase() }.take(2).joinToString("")
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -457,11 +485,11 @@ fun SalesManagerHomeScreen(viewModel: DexcargoViewModel) {
     ) {
         item {
             EmployeeProfileBar(
-                name = currentEmp?.name ?: "Peter Mwangi",
+                name = empName,
                 roleLabel = "Sales Manager",
-                id = currentEmp?.id ?: "SM-001",
+                id = empId,
                 badgeColor = GreenAccent,
-                initials = "PM",
+                initials = if (empInitials.isNotBlank()) empInitials else "SM",
                 notificationCount = myAlerts.size,
                 onNotificationClick = { showNotificationsDialog = true },
                 onProfileClick = { viewModel.navigateTo(Screen.ProfileSettings) }
@@ -471,7 +499,7 @@ fun SalesManagerHomeScreen(viewModel: DexcargoViewModel) {
         item {
             CommissionHeroCard(
                 label = "This Month's Manager Override",
-                amount = "KES ${smCommission.toInt().toLocaleString()}",
+                amount = "KES ${smCommission.toLocaleString()}",
                 indicator = "▲ 32.5% vs target",
                 icon = "📈",
                 gradientBg = Brush.linearGradient(
@@ -497,7 +525,7 @@ fun SalesManagerHomeScreen(viewModel: DexcargoViewModel) {
             ) {
                 StatCard(
                     modifier = Modifier.weight(1f),
-                    num = "12",
+                    num = if (salesRepsCount > 0) salesRepsCount.toString() else "1",
                     label = "Sales Reps",
                     icon = "🤝",
                     color = OrangeAccent
@@ -520,14 +548,15 @@ fun SalesManagerHomeScreen(viewModel: DexcargoViewModel) {
             ) {
                 StatCard(
                     modifier = Modifier.weight(1f),
-                    num = "KES ${String.format("%.2f", revenueM)}M",
+                    num = "KES ${totalPaidRevenue.toLocaleString()}",
                     label = "Gross Revenue",
                     icon = "💰",
                     color = GreenAccent
                 )
+                val conversionRate = if (packages.isNotEmpty()) (packages.count { it.status != "registered" } * 100 / packages.size) else 0
                 StatCard(
                     modifier = Modifier.weight(1f),
-                    num = "68.4%",
+                    num = "$conversionRate%",
                     label = "Conversion Rate",
                     icon = "📊",
                     color = PurpleAccent
@@ -543,16 +572,30 @@ fun SalesManagerHomeScreen(viewModel: DexcargoViewModel) {
                     .padding(horizontal = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                LeaderboardCard(
-                    name = "John Kamau (SR-002)",
-                    earned = "KES ${(24680 + (johnPackages.sumOf { it.cost } * 0.1).toInt()).toLocaleString()} Earned",
-                    rank = "🏆"
-                )
-                LeaderboardCard(
-                    name = "Grace Akinyi (SR-003)",
-                    earned = "KES 19,200 Earned",
-                    rank = "🥈"
-                )
+                val salesReps = employeesList.filter { it.role == "sr" }
+                if (salesReps.isNotEmpty()) {
+                    salesReps.forEachIndexed { index, rep ->
+                        val repPackages = packages.filter { it.salesRep.contains(rep.id, ignoreCase = true) || it.salesRep.contains(rep.name, ignoreCase = true) }
+                        val repRevenue = repPackages.filter { it.status == "collected" }.sumOf { it.cost }
+                        val repComm = (repRevenue * 0.10).toInt()
+                        val medal = when (index) {
+                            0 -> "🏆"
+                            1 -> "🥈"
+                            else -> "🥉"
+                        }
+                        LeaderboardCard(
+                            name = rep.name,
+                            earned = "KES ${repComm.toLocaleString()} Earned",
+                            rank = medal
+                        )
+                    }
+                } else {
+                    LeaderboardCard(
+                        name = "John Kamau",
+                        earned = "KES ${(totalPaidRevenue * 0.10).toInt().toLocaleString()} Earned",
+                        rank = "🏆"
+                    )
+                }
             }
         }
 
@@ -568,29 +611,31 @@ fun SalesManagerHomeScreen(viewModel: DexcargoViewModel) {
                     .padding(14.dp)
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text("Own Accounts (25% GPM Comm)", color = TextSecondary, fontSize = 11.5.sp)
-                        Text("KES 42,800", color = GreenAccent, fontSize = 12.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
-                    }
-                    Divider(color = DarkBorder)
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text("SR-001 (James) Override (5%)", color = TextSecondary, fontSize = 11.5.sp)
-                        Text("KES 8,640", color = OrangeAccent, fontSize = 12.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
-                    }
-                    Divider(color = DarkBorder)
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text("SR-002 (John) Override (5%)", color = TextSecondary, fontSize = 11.5.sp)
-                        val johnOverride = 7480 + (johnPackages.sumOf { it.cost } * 0.05).toInt()
-                        Text("KES ${johnOverride.toLocaleString()}", color = OrangeAccent, fontSize = 12.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+                    val salesReps = employeesList.filter { it.role == "sr" }
+                    if (salesReps.isNotEmpty()) {
+                        salesReps.forEachIndexed { idx, rep ->
+                            val repPackages = packages.filter { it.salesRep.contains(rep.id, ignoreCase = true) || it.salesRep.contains(rep.name, ignoreCase = true) }
+                            val repRevenue = repPackages.filter { it.status == "collected" }.sumOf { it.cost }
+                            val repOverride = (repRevenue * 0.05).toInt()
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text("${rep.name} Override (5%)", color = TextSecondary, fontSize = 11.5.sp)
+                                Text("KES ${repOverride.toLocaleString()}", color = OrangeAccent, fontSize = 12.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+                            }
+                            if (idx < salesReps.size - 1) {
+                                Divider(color = DarkBorder)
+                            }
+                        }
+                    } else {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text("John Kamau Override (5%)", color = TextSecondary, fontSize = 11.5.sp)
+                            Text("KES ${(totalPaidRevenue * 0.05).toInt().toLocaleString()}", color = OrangeAccent, fontSize = 12.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+                        }
                     }
                 }
             }
@@ -606,6 +651,7 @@ fun AdminHomeScreen(viewModel: DexcargoViewModel) {
     val packages by viewModel.cargoPackages.collectAsState()
     val notifications by viewModel.paymentNotifications.collectAsState()
     val alerts by viewModel.broadcastMessages.collectAsState()
+    val backendCommissions by viewModel.backendCommissions.collectAsState()
 
     var showNotificationsDialog by remember { mutableStateOf(false) }
 
@@ -613,28 +659,25 @@ fun AdminHomeScreen(viewModel: DexcargoViewModel) {
         NotificationsDialog(messages = alerts, onDismiss = { showNotificationsDialog = false })
     }
 
-    val johnPackages = remember(packages) {
-        packages.filter { it.salesRep.contains("SR-002") && it.status != "registered" }
+    val totalManaged = packages.size
+    val totalRevenue = packages.filter { it.status != "registered" }.sumOf { it.cost }
+    val grossPaidComm = remember(backendCommissions, packages) {
+        if (backendCommissions.isNotEmpty()) {
+            backendCommissions.sumOf { it.amount }.toInt()
+        } else {
+            (totalRevenue * 0.15).toInt() + (packages.size * 300)
+        }
     }
-    val dynamicJohnCom = johnPackages.sumOf { it.cost * 0.1 }
-    val dynamicMaryCom = packages.size * 300
-    val dynamicSM = (dynamicJohnCom * 0.5) + (dynamicMaryCom * 0.2)
 
-    val johnCom = 24680 + dynamicJohnCom.toInt()
-    val maryCom = 36540 + dynamicMaryCom
-    val smCom = 58920 + dynamicSM.toInt()
-    val graceCom = 19200
-
-    val grossPaidComm = johnCom + maryCom + smCom + graceCom
-
-    val totalManaged = 1248 + packages.size - 4
-    val revenueM = 8.42 + (packages.filter { it.status != "registered" }.sumOf { it.cost } / 1000000.0)
+    val activeClientsCount = remember(packages) {
+        packages.map { it.consignee }.filter { it.isNotBlank() }.distinct().size
+    }
 
     val unlinkedNotifsCount = notifications.count { it.status == "PENDING" }
     val totalOutstanding = packages.filter { it.status == "registered" }.sumOf { it.cost }
     val airPackagesCount = packages.count { it.mode == "Air Freight" }
     val seaPackagesCount = packages.count { it.mode == "Sea Freight" }
-    val collectedCount = packages.count { it.status == "collected" || it.status == "cleared" }
+    val collectedCount = packages.count { it.status == "collected" }
 
     LazyColumn(
         modifier = Modifier
@@ -685,7 +728,7 @@ fun AdminHomeScreen(viewModel: DexcargoViewModel) {
                 )
                 StatCard(
                     modifier = Modifier.weight(1f),
-                    num = "KES ${String.format("%.2f", revenueM)}M",
+                    num = "KES ${totalRevenue.toLocaleString()}",
                     label = "Gross Revenue",
                     icon = "💰",
                     color = GreenAccent
@@ -707,7 +750,7 @@ fun AdminHomeScreen(viewModel: DexcargoViewModel) {
                 )
                 StatCard(
                     modifier = Modifier.weight(1f),
-                    num = "532",
+                    num = if (activeClientsCount > 0) activeClientsCount.toString() else "0",
                     label = "Active Clients",
                     icon = "🏛️",
                     color = PurpleAccent
@@ -753,7 +796,7 @@ fun AdminHomeScreen(viewModel: DexcargoViewModel) {
                     icon = "📦",
                     color = BlueAccent
                 )
-                val rate = if (packages.isNotEmpty()) (collectedCount * 100 / packages.size) else 100
+                val rate = if (packages.isNotEmpty()) (collectedCount * 100 / packages.size) else 0
                 StatCard(
                     modifier = Modifier.weight(1f),
                     num = "$rate%",
@@ -1072,10 +1115,34 @@ fun AdminHomeScreen(viewModel: DexcargoViewModel) {
                     .padding(12.dp)
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    LedgerRow(label = "Mary Wanjiku", id = "LM-001", amount = "KES ${maryCom.toLocaleString()}", color = BlueAccent)
-                    LedgerRow(label = "Peter Mwangi", id = "SM-001", amount = "KES ${smCom.toLocaleString()}", color = GreenAccent)
-                    LedgerRow(label = "John Kamau", id = "SR-002", amount = "KES ${johnCom.toLocaleString()}", color = OrangeAccent)
-                    LedgerRow(label = "Grace Akinyi", id = "SR-003", amount = "KES ${graceCom.toLocaleString()}", color = OrangeAccent)
+                    if (employeesList.isNotEmpty()) {
+                        employeesList.forEach { emp ->
+                            val color = when (emp.role) {
+                                "lm" -> BlueAccent
+                                "sm" -> GreenAccent
+                                "sr" -> OrangeAccent
+                                else -> PurpleAccent
+                            }
+                            val commAmount = when (emp.role) {
+                                "lm" -> packages.count { it.status == "collected" } * 300
+                                "sm" -> (packages.filter { it.status == "collected" }.sumOf { it.cost } * 0.05).toInt()
+                                "sr" -> {
+                                    val repPkgs = packages.filter { it.salesRep.contains(emp.id, ignoreCase = true) || it.salesRep.contains(emp.name, ignoreCase = true) }
+                                    (repPkgs.filter { it.status == "collected" }.sumOf { it.cost } * 0.10).toInt()
+                                }
+                                else -> 0
+                            }
+                            LedgerRow(
+                                label = emp.name,
+                                id = emp.id,
+                                amount = "KES ${commAmount.toLocaleString()}",
+                                color = color
+                            )
+                        }
+                    } else {
+                        LedgerRow(label = "Mary Wanjiku", id = "LM-001", amount = "KES ${(packages.size * 300).toLocaleString()}", color = BlueAccent)
+                        LedgerRow(label = "John Kamau", id = "SR-002", amount = "KES ${(totalRevenue * 0.10).toInt().toLocaleString()}", color = OrangeAccent)
+                    }
                 }
             }
         }
