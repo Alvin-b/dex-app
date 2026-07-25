@@ -11,6 +11,110 @@ import okhttp3.RequestBody
 
 class DexcargoRepository(private val database: AppDatabase) {
 
+    init {
+        initFirestoreRealtimeSync()
+    }
+
+    private fun initFirestoreRealtimeSync() {
+        try {
+            val firestore = com.google.firebase.firestore.FirebaseFirestore.getInstance()
+
+            // Real-time listener for users / employees
+            firestore.collection("users").addSnapshotListener { snapshot, e ->
+                if (e != null || snapshot == null) return@addSnapshotListener
+                CoroutineScope(Dispatchers.IO).launch {
+                    val firestoreEmployees = snapshot.documents.mapNotNull { doc ->
+                        val id = doc.id
+                        val name = doc.getString("name") ?: doc.getString("email") ?: id
+                        val email = doc.getString("email") ?: ""
+                        val role = doc.getString("role") ?: "sr"
+                        val isActive = doc.getBoolean("isActive") ?: true
+                        val pin = doc.getString("pin")
+                        val biometricEnabled = doc.getBoolean("biometricEnabled") ?: false
+                        val password = doc.getString("password") ?: "password"
+                        if (email.isNotBlank()) {
+                            Employee(id, name, email, password, role, isActive, pin, biometricEnabled)
+                        } else null
+                    }
+                    if (firestoreEmployees.isNotEmpty()) {
+                        database.employeeDao().insertEmployees(firestoreEmployees)
+                    }
+                }
+            }
+
+            // Real-time listener for cargo_packages
+            firestore.collection("cargo_packages").addSnapshotListener { snapshot, e ->
+                if (e != null || snapshot == null) return@addSnapshotListener
+                CoroutineScope(Dispatchers.IO).launch {
+                    val firestorePackages = snapshot.documents.mapNotNull { doc ->
+                        val id = doc.id
+                        val consignee = doc.getString("consignee") ?: return@mapNotNull null
+                        val phone = doc.getString("phone") ?: ""
+                        val origin = doc.getString("origin") ?: ""
+                        val dest = doc.getString("dest") ?: doc.getString("destination") ?: ""
+                        val desc = doc.getString("desc") ?: doc.getString("description") ?: ""
+                        val mode = doc.getString("mode") ?: "Air Freight"
+                        val weight = doc.getDouble("weight") ?: 0.0
+                        val pcs = doc.getLong("pcs")?.toInt() ?: 1
+                        val cost = doc.getLong("cost")?.toInt() ?: 0
+                        val salesRep = doc.getString("salesRep") ?: ""
+                        val status = doc.getString("status") ?: "registered"
+                        val registeredAt = doc.getString("registeredAt") ?: ""
+                        val paidAt = doc.getString("paidAt")
+                        val collectedAt = doc.getString("collectedAt")
+                        val collectorName = doc.getString("collectorName")
+                        val collectorId = doc.getString("collectorId")
+                        val collectorPhone = doc.getString("collectorPhone")
+                        val paymentMethod = doc.getString("paymentMethod")
+                        val paymentRef = doc.getString("paymentRef")
+                        val packagePhotoUrl = doc.getString("packagePhotoUrl")
+
+                        CargoPackage(
+                            id = id,
+                            consignee = consignee,
+                            phone = phone,
+                            origin = origin,
+                            dest = dest,
+                            desc = desc,
+                            mode = mode,
+                            weight = weight,
+                            pcs = pcs,
+                            cost = cost,
+                            salesRep = salesRep,
+                            status = status,
+                            registeredAt = registeredAt,
+                            paidAt = paidAt,
+                            collectedAt = collectedAt,
+                            collectorName = collectorName,
+                            collectorId = collectorId,
+                            collectorPhone = collectorPhone,
+                            paymentMethod = paymentMethod,
+                            paymentRef = paymentRef,
+                            packagePhotoUrl = packagePhotoUrl,
+                            syncPending = false
+                        )
+                    }
+                    if (firestorePackages.isNotEmpty()) {
+                        val localMap = database.cargoPackageDao().getAllPackages().firstOrNull()?.associateBy { it.id } ?: emptyMap()
+                        val merged = firestorePackages.map { incoming ->
+                            val local = localMap[incoming.id]
+                            if (local != null && !local.packagePhotoUrl.isNullOrBlank() && local.packagePhotoUrl.startsWith("base64:") &&
+                                (incoming.packagePhotoUrl.isNullOrBlank() || !incoming.packagePhotoUrl.startsWith("base64:"))
+                            ) {
+                                incoming.copy(packagePhotoUrl = local.packagePhotoUrl)
+                            } else {
+                                incoming
+                            }
+                        }
+                        database.cargoPackageDao().insertPackages(merged)
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
     val employees: Flow<List<Employee>> = database.employeeDao().getAllEmployees()
     val cargoPackages: Flow<List<CargoPackage>> = database.cargoPackageDao().getAllPackages()
     val paymentNotifications: Flow<List<PaymentNotification>> = database.paymentNotificationDao().getAllNotifications()
@@ -20,11 +124,57 @@ class DexcargoRepository(private val database: AppDatabase) {
 
     suspend fun getEmployeeById(id: String): Employee? = database.employeeDao().getEmployeeById(id)
     
-    suspend fun insertEmployee(employee: Employee) = database.employeeDao().insertEmployee(employee)
+    suspend fun insertEmployee(employee: Employee, online: Boolean = false) {
+        database.employeeDao().insertEmployee(employee)
+        try {
+            val userMap = hashMapOf(
+                "id" to employee.id,
+                "name" to employee.name,
+                "email" to employee.email,
+                "role" to employee.role,
+                "isActive" to employee.isActive,
+                "pin" to (employee.pin ?: ""),
+                "biometricEnabled" to employee.biometricEnabled,
+                "password" to employee.password
+            )
+            com.google.firebase.firestore.FirebaseFirestore.getInstance()
+                .collection("users")
+                .document(employee.id)
+                .set(userMap)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        if (online) {
+            try {
+                SupabaseClient.api.createProfile(
+                    apiKey = SupabaseClient.API_KEY,
+                    authHeader = SupabaseClient.getBearerHeader(),
+                    profile = ProfileResponse(
+                        id = employee.id,
+                        name = employee.name,
+                        email = employee.email,
+                        isActive = employee.isActive,
+                        pinHash = employee.pin,
+                        biometricEnabled = employee.biometricEnabled
+                    )
+                )
+                SupabaseClient.api.createUserRole(
+                    apiKey = SupabaseClient.API_KEY,
+                    authHeader = SupabaseClient.getBearerHeader(),
+                    role = UserRoleResponse(
+                        userId = employee.id,
+                        role = employee.role
+                    )
+                )
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
     
     suspend fun updateEmployeeActiveStatus(id: String, isActive: Boolean, online: Boolean = false) {
         database.employeeDao().updateEmployeeActiveStatus(id, isActive)
-        if (online && SupabaseClient.accessToken != null) {
+        if (online) {
             try {
                 SupabaseClient.api.updateProfile(
                     apiKey = SupabaseClient.API_KEY,
@@ -40,7 +190,7 @@ class DexcargoRepository(private val database: AppDatabase) {
     
     suspend fun updateEmployeePinAndBiometrics(id: String, pin: String?, biometricEnabled: Boolean, online: Boolean = false) {
         database.employeeDao().updateEmployeePinAndBiometrics(id, pin, biometricEnabled)
-        if (online && SupabaseClient.accessToken != null) {
+        if (online) {
             try {
                 SupabaseClient.api.updateProfile(
                     apiKey = SupabaseClient.API_KEY,
@@ -54,11 +204,86 @@ class DexcargoRepository(private val database: AppDatabase) {
         }
     }
 
+    suspend fun deleteEmployee(id: String, online: Boolean = false) {
+        database.employeeDao().deleteEmployeeById(id)
+        if (online) {
+            try {
+                SupabaseClient.api.deleteProfile(
+                    apiKey = SupabaseClient.API_KEY,
+                    authHeader = SupabaseClient.getBearerHeader(),
+                    idFilter = "eq.$id"
+                )
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+            try {
+                SupabaseClient.api.deleteUserRole(
+                    apiKey = SupabaseClient.API_KEY,
+                    authHeader = SupabaseClient.getBearerHeader(),
+                    userIdFilter = "eq.$id"
+                )
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+            try {
+                val firestore = com.google.firebase.firestore.FirebaseFirestore.getInstance()
+                firestore.collection("users").document(id).delete()
+                firestore.collection("users").whereEqualTo("id", id).get()
+                    .addOnSuccessListener { querySnapshot ->
+                        for (doc in querySnapshot.documents) {
+                            doc.reference.delete()
+                        }
+                    }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
     suspend fun getPackageById(id: String): CargoPackage? = database.cargoPackageDao().getPackageById(id)
     
     suspend fun insertPackage(cargoPackage: CargoPackage, online: Boolean = false) {
-        database.cargoPackageDao().insertPackage(cargoPackage)
-        if (online && SupabaseClient.accessToken != null) {
+        val existing = database.cargoPackageDao().getPackageById(cargoPackage.id)
+        val pkgToSave = if (existing != null && !existing.packagePhotoUrl.isNullOrBlank() && existing.packagePhotoUrl.startsWith("base64:") &&
+            (cargoPackage.packagePhotoUrl.isNullOrBlank() || !cargoPackage.packagePhotoUrl.startsWith("base64:"))
+        ) {
+            cargoPackage.copy(packagePhotoUrl = existing.packagePhotoUrl)
+        } else {
+            cargoPackage
+        }
+        database.cargoPackageDao().insertPackage(pkgToSave)
+        try {
+            val pkgMap = hashMapOf(
+                "id" to cargoPackage.id,
+                "consignee" to cargoPackage.consignee,
+                "phone" to cargoPackage.phone,
+                "origin" to cargoPackage.origin,
+                "dest" to cargoPackage.dest,
+                "desc" to cargoPackage.desc,
+                "mode" to cargoPackage.mode,
+                "weight" to cargoPackage.weight,
+                "pcs" to cargoPackage.pcs,
+                "cost" to cargoPackage.cost,
+                "salesRep" to cargoPackage.salesRep,
+                "status" to cargoPackage.status,
+                "registeredAt" to cargoPackage.registeredAt,
+                "paidAt" to (cargoPackage.paidAt ?: ""),
+                "collectedAt" to (cargoPackage.collectedAt ?: ""),
+                "collectorName" to (cargoPackage.collectorName ?: ""),
+                "collectorId" to (cargoPackage.collectorId ?: ""),
+                "collectorPhone" to (cargoPackage.collectorPhone ?: ""),
+                "paymentMethod" to (cargoPackage.paymentMethod ?: ""),
+                "paymentRef" to (cargoPackage.paymentRef ?: ""),
+                "packagePhotoUrl" to (cargoPackage.packagePhotoUrl ?: "")
+            )
+            com.google.firebase.firestore.FirebaseFirestore.getInstance()
+                .collection("cargo_packages")
+                .document(cargoPackage.id)
+                .set(pkgMap)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        if (online) {
             try {
                 SupabaseClient.api.insertCargoPackage(
                     apiKey = SupabaseClient.API_KEY,
@@ -78,7 +303,7 @@ class DexcargoRepository(private val database: AppDatabase) {
 
     suspend fun insertNotification(notification: PaymentNotification, online: Boolean = false) {
         database.paymentNotificationDao().insertNotification(notification)
-        if (online && SupabaseClient.accessToken != null) {
+        if (online) {
             try {
                 SupabaseClient.api.insertPaymentNotification(
                     apiKey = SupabaseClient.API_KEY,
@@ -93,7 +318,7 @@ class DexcargoRepository(private val database: AppDatabase) {
     
     suspend fun updateNotificationStatus(id: String, status: String, online: Boolean = false) {
         database.paymentNotificationDao().updateNotificationStatus(id, status)
-        if (online && SupabaseClient.accessToken != null) {
+        if (online) {
             try {
                 SupabaseClient.api.updatePaymentNotification(
                     apiKey = SupabaseClient.API_KEY,
@@ -111,7 +336,7 @@ class DexcargoRepository(private val database: AppDatabase) {
     
     suspend fun insertAllocation(allocation: PaymentAllocation, online: Boolean = false) {
         database.paymentAllocationDao().insertAllocation(allocation)
-        if (online && SupabaseClient.accessToken != null) {
+        if (online) {
             try {
                 SupabaseClient.api.insertPaymentAllocation(
                     apiKey = SupabaseClient.API_KEY,
@@ -126,7 +351,7 @@ class DexcargoRepository(private val database: AppDatabase) {
 
     suspend fun insertLog(log: AuditLog, online: Boolean = false) {
         database.auditLogDao().insertLog(log)
-        if (online && SupabaseClient.accessToken != null) {
+        if (online) {
             try {
                 SupabaseClient.api.insertAuditLog(
                     apiKey = SupabaseClient.API_KEY,
@@ -141,7 +366,7 @@ class DexcargoRepository(private val database: AppDatabase) {
 
     suspend fun insertMessage(message: BroadcastMessage, online: Boolean = false) {
         database.broadcastMessageDao().insertMessage(message)
-        if (online && SupabaseClient.accessToken != null) {
+        if (online) {
             try {
                 SupabaseClient.api.insertBroadcastMessage(
                     apiKey = SupabaseClient.API_KEY,
@@ -155,7 +380,7 @@ class DexcargoRepository(private val database: AppDatabase) {
     }
 
     suspend fun uploadPhoto(packageId: String, filename: String, bytes: ByteArray, online: Boolean): String? {
-        if (online && SupabaseClient.accessToken != null) {
+        if (online) {
             try {
                 val reqBody = RequestBody.create(
                     "image/jpeg".toMediaTypeOrNull(),
@@ -179,7 +404,7 @@ class DexcargoRepository(private val database: AppDatabase) {
     }
 
     suspend fun uploadProofPhoto(filename: String, bytes: ByteArray, online: Boolean): String? {
-        if (online && SupabaseClient.accessToken != null) {
+        if (online) {
             try {
                 val reqBody = RequestBody.create(
                     "image/jpeg".toMediaTypeOrNull(),
@@ -202,7 +427,7 @@ class DexcargoRepository(private val database: AppDatabase) {
     }
 
     suspend fun uploadSignaturePhoto(filename: String, bytes: ByteArray, online: Boolean): String? {
-        if (online && SupabaseClient.accessToken != null) {
+        if (online) {
             try {
                 val reqBody = RequestBody.create(
                     "image/png".toMediaTypeOrNull(),
@@ -225,7 +450,6 @@ class DexcargoRepository(private val database: AppDatabase) {
     }
 
     suspend fun downloadPhoto(packageId: String, filename: String): ByteArray? {
-        if (SupabaseClient.accessToken == null) return null
         return try {
             val responseBody = SupabaseClient.api.downloadPackagePhoto(
                 apiKey = SupabaseClient.API_KEY,
@@ -243,7 +467,6 @@ class DexcargoRepository(private val database: AppDatabase) {
     // --- COMMISSION OPERATIONS (SECTION 8) ---
 
     suspend fun getCommissionsFromBackend(employeeId: String? = null, status: String? = null): List<CommissionApi> {
-        if (SupabaseClient.accessToken == null) return emptyList()
         return try {
             val filterEmp = employeeId?.let { "eq.$it" }
             val filterStatus = status?.let { "eq.$it" }
@@ -260,7 +483,6 @@ class DexcargoRepository(private val database: AppDatabase) {
     }
 
     suspend fun approveCommissionOnBackend(id: String): Boolean {
-        if (SupabaseClient.accessToken == null) return false
         return try {
             val response = SupabaseClient.api.approveCommission(
                 apiKey = SupabaseClient.API_KEY,
@@ -275,7 +497,6 @@ class DexcargoRepository(private val database: AppDatabase) {
     }
 
     suspend fun markCommissionPaidOnBackend(id: String, reference: String): Boolean {
-        if (SupabaseClient.accessToken == null) return false
         return try {
             val response = SupabaseClient.api.markCommissionPaid(
                 apiKey = SupabaseClient.API_KEY,
@@ -290,7 +511,6 @@ class DexcargoRepository(private val database: AppDatabase) {
     }
 
     suspend fun getCommissionRatesFromBackend(): List<CommissionRateApi> {
-        if (SupabaseClient.accessToken == null) return emptyList()
         return try {
             SupabaseClient.api.getCommissionRates(
                 apiKey = SupabaseClient.API_KEY,
@@ -305,29 +525,52 @@ class DexcargoRepository(private val database: AppDatabase) {
     // --- SYNC FROM BACKEND LOGIC ---
 
     suspend fun syncAllFromBackend(online: Boolean) {
-        if (!online || SupabaseClient.accessToken == null) return
+        if (!online) return
         
         val apiKey = SupabaseClient.API_KEY
         val authHeader = SupabaseClient.getBearerHeader()
 
-        // 1. Sync profiles & roles -> Employees
+        // First: Push any unsynced local pending packages to cloud
+        try {
+            val localPackages = database.cargoPackageDao().getAllPackages().firstOrNull() ?: emptyList()
+            val pendingPackages = localPackages.filter { it.syncPending }
+            for (pending in pendingPackages) {
+                try {
+                    SupabaseClient.api.insertCargoPackage(apiKey = apiKey, authHeader = authHeader, body = pending.toApi())
+                    database.cargoPackageDao().insertPackage(pending.copy(syncPending = false))
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
+        // 1. Sync profiles & roles -> Employees (preserving passwords!)
         try {
             val profiles = SupabaseClient.api.getAllProfiles(apiKey, authHeader)
             val allRoles = SupabaseClient.api.getAllUserRoles(apiKey, authHeader)
             val rolesMap = allRoles.associateBy { it.userId }
 
+            val existingLocalEmps = database.employeeDao().getAllEmployees().firstOrNull() ?: emptyList()
+            val existingById = existingLocalEmps.associateBy { it.id }
+            val existingByEmail = existingLocalEmps.associateBy { it.email.lowercase() }
+
             val employeeList = profiles.map { profile ->
                 val rawRole = rolesMap[profile.id]?.role ?: "sr"
                 val role = if (rawRole == "clerk") "lm" else rawRole
+                val existing = existingById[profile.id] ?: existingByEmail[profile.email.lowercase()]
+                val preservedPassword = existing?.password?.takeIf { it.isNotBlank() } ?: "password"
+
                 Employee(
                     id = profile.id,
                     name = profile.name,
                     email = profile.email,
-                    password = "password",
+                    password = preservedPassword,
                     role = role,
                     isActive = profile.isActive,
-                    pin = profile.pinHash,
-                    biometricEnabled = profile.biometricEnabled
+                    pin = profile.pinHash ?: existing?.pin,
+                    biometricEnabled = profile.biometricEnabled ?: existing?.biometricEnabled ?: false
                 )
             }
             if (employeeList.isNotEmpty()) {
@@ -342,12 +585,18 @@ class DexcargoRepository(private val database: AppDatabase) {
             val packagesApi = SupabaseClient.api.getCargoPackages(apiKey, authHeader)
             val packagesEntities = packagesApi.map { it.toEntity(syncPending = false) }
             if (packagesEntities.isNotEmpty()) {
-                val allLocal = database.cargoPackageDao().getAllPackages().firstOrNull() ?: emptyList()
-                val pendingIds = allLocal.filter { it.syncPending }.map { it.id }.toSet()
-                val toInsert = packagesEntities.filter { it.id !in pendingIds }
-                if (toInsert.isNotEmpty()) {
-                    database.cargoPackageDao().insertPackages(toInsert)
+                val localMap = database.cargoPackageDao().getAllPackages().firstOrNull()?.associateBy { it.id } ?: emptyMap()
+                val mergedEntities = packagesEntities.map { incoming ->
+                    val local = localMap[incoming.id]
+                    if (local != null && !local.packagePhotoUrl.isNullOrBlank() && local.packagePhotoUrl.startsWith("base64:") &&
+                        (incoming.packagePhotoUrl.isNullOrBlank() || !incoming.packagePhotoUrl.startsWith("base64:"))
+                    ) {
+                        incoming.copy(packagePhotoUrl = local.packagePhotoUrl)
+                    } else {
+                        incoming
+                    }
                 }
+                database.cargoPackageDao().insertPackages(mergedEntities)
 
                 // Asynchronously check and cache package photos starting with package-photos/ for offline access
                 val allUpdatedLocal = database.cargoPackageDao().getAllPackages().firstOrNull() ?: emptyList()

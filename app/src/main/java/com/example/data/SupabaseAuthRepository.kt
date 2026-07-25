@@ -126,6 +126,23 @@ class SupabaseAuthRepository(
                     biometricEnabled = profile.biometricEnabled
                 )
 
+                if (profilesList.isEmpty()) {
+                    try {
+                        SupabaseClient.api.createProfile(
+                            apiKey = SupabaseClient.API_KEY,
+                            authHeader = SupabaseClient.getBearerHeader(),
+                            profile = profile
+                        )
+                        SupabaseClient.api.createUserRole(
+                            apiKey = SupabaseClient.API_KEY,
+                            authHeader = SupabaseClient.getBearerHeader(),
+                            role = UserRoleResponse(userId = body.user.id, role = role)
+                        )
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
+                }
+
                 // Cache in local DB
                 database.employeeDao().insertEmployee(employee)
                 _currentEmployee.value = employee

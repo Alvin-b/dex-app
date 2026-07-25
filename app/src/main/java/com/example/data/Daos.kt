@@ -5,7 +5,7 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface EmployeeDao {
-    @Query("SELECT * FROM employees")
+    @Query("SELECT * FROM employees ORDER BY id ASC")
     fun getAllEmployees(): Flow<List<Employee>>
 
     @Query("SELECT * FROM employees WHERE id = :id")
@@ -22,11 +22,14 @@ interface EmployeeDao {
 
     @Query("UPDATE employees SET pin = :pin, biometricEnabled = :biometricEnabled WHERE id = :id")
     suspend fun updateEmployeePinAndBiometrics(id: String, pin: String?, biometricEnabled: Boolean)
+
+    @Query("DELETE FROM employees WHERE id = :id")
+    suspend fun deleteEmployeeById(id: String)
 }
 
 @Dao
 interface CargoPackageDao {
-    @Query("SELECT * FROM cargo_packages")
+    @Query("SELECT * FROM cargo_packages ORDER BY registeredAt DESC, id DESC")
     fun getAllPackages(): Flow<List<CargoPackage>>
 
     @Query("SELECT * FROM cargo_packages WHERE id = :id")
@@ -44,7 +47,7 @@ interface CargoPackageDao {
 
 @Dao
 interface PaymentNotificationDao {
-    @Query("SELECT * FROM payment_notifications")
+    @Query("SELECT * FROM payment_notifications ORDER BY id DESC")
     fun getAllNotifications(): Flow<List<PaymentNotification>>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -62,10 +65,10 @@ interface PaymentNotificationDao {
 
 @Dao
 interface PaymentAllocationDao {
-    @Query("SELECT * FROM payment_allocations")
+    @Query("SELECT * FROM payment_allocations ORDER BY linkedAt DESC, id DESC")
     fun getAllAllocations(): Flow<List<PaymentAllocation>>
 
-    @Query("SELECT * FROM payment_allocations WHERE orderId = :orderId")
+    @Query("SELECT * FROM payment_allocations WHERE orderId = :orderId ORDER BY linkedAt DESC, id DESC")
     fun getAllAllocationsForPackage(orderId: String): Flow<List<PaymentAllocation>>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)

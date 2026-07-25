@@ -17,6 +17,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
@@ -24,6 +26,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.widget.Toast
+import androidx.compose.ui.platform.LocalContext
 import com.example.data.CargoPackage
 import com.example.data.Employee
 import com.example.ui.DexcargoViewModel
@@ -34,6 +38,7 @@ import com.example.ui.theme.*
 @Composable
 fun SalesRepHomeScreen(viewModel: DexcargoViewModel) {
     val currentEmp by viewModel.currentEmployee.collectAsState()
+    val userPhoto by viewModel.userProfilePhotoBitmap.collectAsState()
     val packages by viewModel.cargoPackages.collectAsState()
     val alerts by viewModel.broadcastMessages.collectAsState()
     val backendCommissions by viewModel.backendCommissions.collectAsState()
@@ -52,6 +57,15 @@ fun SalesRepHomeScreen(viewModel: DexcargoViewModel) {
         } else {
             (totalCost * 0.10).toInt()
         }
+    }
+
+    val (commChangeText, isPosChange) = remember(backendCommissions, myPackages, currentEmp) {
+        viewModel.getMonthOverMonthCommissionChange(
+            employeeId = currentEmp?.id,
+            commissions = backendCommissions,
+            packages = myPackages,
+            role = "sr"
+        )
     }
 
     val regCount = myPackages.count { it.status == "registered" }
@@ -87,6 +101,7 @@ fun SalesRepHomeScreen(viewModel: DexcargoViewModel) {
                 id = empId,
                 badgeColor = OrangeAccent,
                 initials = if (empInitials.isNotBlank()) empInitials else "SR",
+                profileBitmap = userPhoto,
                 notificationCount = myAlerts.size,
                 onNotificationClick = { showNotificationsDialog = true },
                 onProfileClick = { viewModel.navigateTo(Screen.ProfileSettings) }
@@ -98,7 +113,8 @@ fun SalesRepHomeScreen(viewModel: DexcargoViewModel) {
             CommissionHeroCard(
                 label = "This Month's Commission",
                 amount = "KES ${commissionAmount.toLocaleString()}",
-                indicator = "▲ 18.2% from last month",
+                indicator = commChangeText,
+                indicatorColor = if (isPosChange) GreenAccent else Color(0xFFEF4444),
                 icon = "💰",
                 gradientBg = Brush.linearGradient(
                     colors = listOf(OrangeAccentBg, Color(0x05F59E0B), DarkSurface)
@@ -220,6 +236,7 @@ fun SalesRepHomeScreen(viewModel: DexcargoViewModel) {
 @Composable
 fun LogisticsManagerHomeScreen(viewModel: DexcargoViewModel) {
     val currentEmp by viewModel.currentEmployee.collectAsState()
+    val userPhoto by viewModel.userProfilePhotoBitmap.collectAsState()
     val packages by viewModel.cargoPackages.collectAsState()
     val alerts by viewModel.broadcastMessages.collectAsState()
     val backendCommissions by viewModel.backendCommissions.collectAsState()
@@ -233,6 +250,15 @@ fun LogisticsManagerHomeScreen(viewModel: DexcargoViewModel) {
         } else {
             totalCost
         }
+    }
+
+    val (sortingChangeText, isPosChange) = remember(backendCommissions, packages, currentEmp) {
+        viewModel.getMonthOverMonthCommissionChange(
+            employeeId = currentEmp?.id,
+            commissions = backendCommissions,
+            packages = packages,
+            role = "lm"
+        )
     }
 
     val totalManaged = packages.size
@@ -267,6 +293,7 @@ fun LogisticsManagerHomeScreen(viewModel: DexcargoViewModel) {
                 id = empId,
                 badgeColor = BlueAccent,
                 initials = if (empInitials.isNotBlank()) empInitials else "LM",
+                profileBitmap = userPhoto,
                 notificationCount = myAlerts.size,
                 onNotificationClick = { showNotificationsDialog = true },
                 onProfileClick = { viewModel.navigateTo(Screen.ProfileSettings) }
@@ -277,7 +304,8 @@ fun LogisticsManagerHomeScreen(viewModel: DexcargoViewModel) {
             CommissionHeroCard(
                 label = "Operational Sorting Commission",
                 amount = "KES ${sortingCommission.toLocaleString()}",
-                indicator = "▲ 24% from last month",
+                indicator = sortingChangeText,
+                indicatorColor = if (isPosChange) GreenAccent else Color(0xFFEF4444),
                 icon = "📦",
                 gradientBg = Brush.linearGradient(
                     colors = listOf(BlueAccentBg, Color(0x053B6BF5), DarkSurface)
@@ -444,6 +472,7 @@ fun LogisticsManagerHomeScreen(viewModel: DexcargoViewModel) {
 @Composable
 fun SalesManagerHomeScreen(viewModel: DexcargoViewModel) {
     val currentEmp by viewModel.currentEmployee.collectAsState()
+    val userPhoto by viewModel.userProfilePhotoBitmap.collectAsState()
     val packages by viewModel.cargoPackages.collectAsState()
     val alerts by viewModel.broadcastMessages.collectAsState()
     val employeesList by viewModel.employees.collectAsState()
@@ -458,6 +487,15 @@ fun SalesManagerHomeScreen(viewModel: DexcargoViewModel) {
         } else {
             (totalPaidRevenue * 0.05).toInt() + (packages.size * 50)
         }
+    }
+
+    val (smChangeText, isPosChange) = remember(backendCommissions, packages, currentEmp) {
+        viewModel.getMonthOverMonthCommissionChange(
+            employeeId = currentEmp?.id,
+            commissions = backendCommissions,
+            packages = packages,
+            role = "sm"
+        )
     }
 
     val totalTeamPackages = packages.size
@@ -490,6 +528,7 @@ fun SalesManagerHomeScreen(viewModel: DexcargoViewModel) {
                 id = empId,
                 badgeColor = GreenAccent,
                 initials = if (empInitials.isNotBlank()) empInitials else "SM",
+                profileBitmap = userPhoto,
                 notificationCount = myAlerts.size,
                 onNotificationClick = { showNotificationsDialog = true },
                 onProfileClick = { viewModel.navigateTo(Screen.ProfileSettings) }
@@ -500,7 +539,8 @@ fun SalesManagerHomeScreen(viewModel: DexcargoViewModel) {
             CommissionHeroCard(
                 label = "This Month's Manager Override",
                 amount = "KES ${smCommission.toLocaleString()}",
-                indicator = "▲ 32.5% vs target",
+                indicator = smChangeText,
+                indicatorColor = if (isPosChange) GreenAccent else Color(0xFFEF4444),
                 icon = "📈",
                 gradientBg = Brush.linearGradient(
                     colors = listOf(GreenAccentBg, Color(0x0510B981), DarkSurface)
@@ -646,7 +686,9 @@ fun SalesManagerHomeScreen(viewModel: DexcargoViewModel) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AdminHomeScreen(viewModel: DexcargoViewModel) {
+    val context = LocalContext.current
     val currentEmp by viewModel.currentEmployee.collectAsState()
+    val userPhoto by viewModel.userProfilePhotoBitmap.collectAsState()
     val employeesList by viewModel.employees.collectAsState()
     val packages by viewModel.cargoPackages.collectAsState()
     val notifications by viewModel.paymentNotifications.collectAsState()
@@ -654,9 +696,45 @@ fun AdminHomeScreen(viewModel: DexcargoViewModel) {
     val backendCommissions by viewModel.backendCommissions.collectAsState()
 
     var showNotificationsDialog by remember { mutableStateOf(false) }
+    var employeeToDelete by remember { mutableStateOf<Employee?>(null) }
 
     if (showNotificationsDialog) {
         NotificationsDialog(messages = alerts, onDismiss = { showNotificationsDialog = false })
+    }
+
+    if (employeeToDelete != null) {
+        val targetEmp = employeeToDelete!!
+        AlertDialog(
+            onDismissRequest = { employeeToDelete = null },
+            title = { Text("Delete User Account", color = Color.White, fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    "Are you sure you want to permanently delete '${targetEmp.name}' (${targetEmp.email})? This action removes their profile from both local and cloud databases.",
+                    color = TextSecondary,
+                    fontSize = 13.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.deleteUserAccount(targetEmp.id) { _, msg ->
+                            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                        }
+                        employeeToDelete = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = RedAccent)
+                ) {
+                    Text("Delete User", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { employeeToDelete = null }) {
+                    Text("Cancel", color = TextSecondary)
+                }
+            },
+            containerColor = DarkSurface,
+            shape = RoundedCornerShape(16.dp)
+        )
     }
 
     val totalManaged = packages.size
@@ -692,6 +770,7 @@ fun AdminHomeScreen(viewModel: DexcargoViewModel) {
                 id = currentEmp?.id ?: "ADM-001",
                 badgeColor = PurpleAccent,
                 initials = "AD",
+                profileBitmap = userPhoto,
                 notificationCount = alerts.size,
                 onNotificationClick = { showNotificationsDialog = true },
                 onProfileClick = { viewModel.navigateTo(Screen.ProfileSettings) }
@@ -975,7 +1054,7 @@ fun AdminHomeScreen(viewModel: DexcargoViewModel) {
                                     )
                                 }
 
-                                if (emp.id != "ADM-001") {
+                                if (emp.id != "ADM-001" && emp.id != currentEmp?.id) {
                                     Button(
                                         onClick = { viewModel.toggleEmployeeActiveState(emp.id) },
                                         colors = ButtonDefaults.buttonColors(
@@ -990,6 +1069,18 @@ fun AdminHomeScreen(viewModel: DexcargoViewModel) {
                                             color = Color.White,
                                             fontSize = 9.5.sp,
                                             fontWeight = FontWeight.Bold
+                                        )
+                                    }
+
+                                    IconButton(
+                                        onClick = { employeeToDelete = emp },
+                                        modifier = Modifier.size(26.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Delete,
+                                            contentDescription = "Delete User",
+                                            tint = RedAccent,
+                                            modifier = Modifier.size(16.dp)
                                         )
                                     }
                                 }
@@ -1158,6 +1249,7 @@ fun EmployeeProfileBar(
     id: String,
     badgeColor: Color,
     initials: String,
+    profileBitmap: android.graphics.Bitmap? = null,
     notificationCount: Int = 0,
     onNotificationClick: () -> Unit = {},
     onProfileClick: () -> Unit
@@ -1169,23 +1261,39 @@ fun EmployeeProfileBar(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text("Good Morning,", color = TextMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-            Text(
-                text = "$name 👋",
-                color = TextPrimary,
-                fontSize = 19.sp,
-                fontWeight = FontWeight.ExtraBold,
-                letterSpacing = (-0.5).sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier.weight(1f)
+        ) {
+            androidx.compose.foundation.Image(
+                painter = androidx.compose.ui.res.painterResource(id = com.example.R.drawable.dex_brand_logo),
+                contentDescription = "DEX Brand Logo",
+                modifier = Modifier
+                    .size(38.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(DarkSurfaceVariant)
+                    .border(1.dp, DarkBorder, RoundedCornerShape(8.dp)),
+                contentScale = ContentScale.Crop
             )
-            Text(
-                text = "$roleLabel · $id",
-                color = badgeColor,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.SemiBold
-            )
+            Column {
+                Text("Good Morning,", color = TextMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                Text(
+                    text = "$name 👋",
+                    color = TextPrimary,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    letterSpacing = (-0.5).sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = "$roleLabel · $id",
+                    color = badgeColor,
+                    fontSize = 10.5.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
         }
 
         Row(
@@ -1239,15 +1347,25 @@ fun EmployeeProfileBar(
                             colors = listOf(badgeColor, badgeColor.copy(alpha = 0.5f))
                         )
                     )
+                    .border(1.dp, badgeColor, CircleShape)
                     .clickable { onProfileClick() },
                 contentAlignment = Alignment.Center
             ) {
-                Text(
-                    text = initials,
-                    color = Color.White,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.ExtraBold
-                )
+                if (profileBitmap != null) {
+                    androidx.compose.foundation.Image(
+                        bitmap = profileBitmap.asImageBitmap(),
+                        contentDescription = "Profile Photo",
+                        modifier = Modifier.fillMaxSize().clip(CircleShape),
+                        contentScale = ContentScale.Crop
+                    )
+                } else {
+                    Text(
+                        text = initials,
+                        color = Color.White,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                }
             }
         }
     }
@@ -1364,6 +1482,7 @@ fun CommissionHeroCard(
     label: String,
     amount: String,
     indicator: String,
+    indicatorColor: Color = GreenAccent,
     icon: String,
     gradientBg: Brush,
     onClick: (() -> Unit)? = null
@@ -1395,7 +1514,7 @@ fun CommissionHeroCard(
                     fontFamily = FontFamily.SansSerif
                 )
                 Spacer(modifier = Modifier.height(6.dp))
-                Text(indicator, color = GreenAccent, fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold)
+                Text(indicator, color = indicatorColor, fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold)
             }
 
             Box(

@@ -123,6 +123,28 @@ class MainActivity : FragmentActivity() {
         }
 
         lifecycleScope.launch {
+            viewModel.triggerStickerGalleryEvent.collect {
+                try {
+                    val intent = Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
+                    startActivityForResult(intent, 107)
+                } catch (e: Exception) {
+                    android.widget.Toast.makeText(this@MainActivity, "Could not open gallery.", android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+
+        lifecycleScope.launch {
+            viewModel.triggerPackageGalleryEvent.collect {
+                try {
+                    val intent = Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
+                    startActivityForResult(intent, 109)
+                } catch (e: Exception) {
+                    android.widget.Toast.makeText(this@MainActivity, "Could not open gallery.", android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+
+        lifecycleScope.launch {
             viewModel.triggerEvidenceGalleryEvent.collect {
                 try {
                     val intent = Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
@@ -132,6 +154,34 @@ class MainActivity : FragmentActivity() {
                 }
             }
         }
+
+        lifecycleScope.launch {
+            viewModel.triggerProfileCameraEvent.collect {
+                if (checkSelfPermission(android.Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                    try {
+                        val intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
+                        startActivityForResult(intent, 111)
+                    } catch (e: Exception) {
+                        android.widget.Toast.makeText(this@MainActivity, "Could not open camera.", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                } else {
+                    requestPermissions(arrayOf(android.Manifest.permission.CAMERA), 110)
+                }
+            }
+        }
+
+        lifecycleScope.launch {
+            viewModel.triggerProfileGalleryEvent.collect {
+                try {
+                    val intent = Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
+                    startActivityForResult(intent, 112)
+                } catch (e: Exception) {
+                    android.widget.Toast.makeText(this@MainActivity, "Could not open gallery.", android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+
+        viewModel.loadUserProfilePhoto(this)
 
         setContent {
             MyApplicationTheme {
@@ -255,23 +305,55 @@ class MainActivity : FragmentActivity() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (resultCode == RESULT_OK) {
-            if (requestCode == 108) {
+            if (requestCode == 107) {
                 val uri = data?.data
                 if (uri != null) {
                     try {
                         val inputStream = contentResolver.openInputStream(uri)
                         val bitmap = android.graphics.BitmapFactory.decodeStream(inputStream)
                         if (bitmap != null) {
-                            if (viewModel.currentScreen.value is Screen.TakePackagePhoto) {
-                                viewModel.onPackagePhotoCaptured(bitmap)
-                            } else {
-                                viewModel.onEvidencePhotoCaptured(bitmap)
-                            }
+                            viewModel.onStickerPhotoCaptured(bitmap)
                         } else {
-                            android.widget.Toast.makeText(this, "Could not load image", android.widget.Toast.LENGTH_SHORT).show()
+                            android.widget.Toast.makeText(this, "Could not load sticker image", android.widget.Toast.LENGTH_SHORT).show()
                         }
                     } catch (e: Exception) {
                         android.widget.Toast.makeText(this, "Error loading image", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                }
+                return
+            }
+
+            if (requestCode == 109) {
+                val uri = data?.data
+                if (uri != null) {
+                    try {
+                        val inputStream = contentResolver.openInputStream(uri)
+                        val bitmap = android.graphics.BitmapFactory.decodeStream(inputStream)
+                        if (bitmap != null) {
+                            viewModel.onPackagePhotoCaptured(bitmap)
+                        } else {
+                            android.widget.Toast.makeText(this, "Could not load package image", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    } catch (e: Exception) {
+                        android.widget.Toast.makeText(this, "Error loading image", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                }
+                return
+            }
+
+            if (requestCode == 112) {
+                val uri = data?.data
+                if (uri != null) {
+                    try {
+                        val inputStream = contentResolver.openInputStream(uri)
+                        val bitmap = android.graphics.BitmapFactory.decodeStream(inputStream)
+                        if (bitmap != null) {
+                            viewModel.onProfilePhotoCaptured(bitmap, this)
+                        } else {
+                            android.widget.Toast.makeText(this, "Could not load profile photo", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    } catch (e: Exception) {
+                        android.widget.Toast.makeText(this, "Error loading profile photo", android.widget.Toast.LENGTH_SHORT).show()
                     }
                 }
                 return
@@ -285,6 +367,8 @@ class MainActivity : FragmentActivity() {
                     viewModel.onPackagePhotoCaptured(bitmap)
                 } else if (requestCode == 106) {
                     viewModel.onEvidencePhotoCaptured(bitmap)
+                } else if (requestCode == 111) {
+                    viewModel.onProfilePhotoCaptured(bitmap, this)
                 }
             } else {
                 handleCameraFallback(requestCode)

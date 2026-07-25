@@ -149,169 +149,407 @@ object GeminiOcrHelper {
     private fun cleanCost(cost: String?): String {
         if (cost.isNullOrBlank()) return ""
         val trimmed = cost.trim()
-        if (trimmed.contains("RMB", ignoreCase = true) || trimmed.contains("USD", ignoreCase = true) || trimmed == "1" || trimmed == "0") {
+        if (trimmed.contains("RMB", ignoreCase = true) || trimmed.contains("USD", ignoreCase = true) || trimmed == "1" || trimmed == "0" || trimmed == "0.00") {
             return ""
         }
         return trimmed
     }
 
-    /**
-     * Extracts shipping label details from a bitmap.
-     * Includes a resilient local fallback if API key is not set or network call fails.
-     */
-    suspend fun extractStickerData(bitmap: Bitmap, labelId: Int, isCustomPhoto: Boolean = false): ExtractedStickerData = withContext(Dispatchers.IO) {
-        val apiKey = BuildConfig.GEMINI_API_KEY
-        
-        // Safety / Prototyping check: if key is empty or placeholder and it's custom photo, return empty form for manual entry
-        if (apiKey.isEmpty() || apiKey == "MY_GEMINI_API_KEY" || apiKey.contains("placeholder", ignoreCase = true)) {
-            Log.w(TAG, "Gemini API key is empty or default.")
-            if (isCustomPhoto) {
-                return@withContext ExtractedStickerData(
-                    trackingNumber = "DEX-" + System.currentTimeMillis().toString().takeLast(6),
-                    consigneeName = "",
-                    consigneePhone = "",
-                    origin = "Hong Kong (HKG)",
-                    destination = "Nairobi (NBO)",
-                    description = "",
-                    mode = "Air Freight",
-                    weight = "1.0",
-                    pieces = "1",
-                    cost = ""
-                )
-            }
-            return@withContext getFallbackData(labelId)
-        }
-
-        val promptText = """
-            Analyze the provided cargo package sticker / shipping label image (e.g. AFA or SF Express label).
-            Extract ONLY the exact shipment details literally printed on the sticker and return a valid JSON object:
-            - tracking_number: Main barcode or tracking number (e.g. "1260707534987")
-            - consignee_name: Text after "Consignee:". If not found or if the image is NOT a shipping sticker, return ""
-            - consignee_phone: Phone number after "Tel:". If Tel is "1", "0", missing, or not a real phone number (>6 digits), return "" (empty string).
-            - origin: Origin airport or city code from route header (e.g. "Hong Kong (HKG)" or "HKG")
-            - destination: Destination airport or city code from route header (e.g. "Nairobi (NBO)" or "NBO")
-            - description: Cargo description after "Nature of the goods:". If it is "1", "0", or placeholder, return "" (empty string).
-            - mode: Freight mode (e.g. "Air Freight" or "Sea Freight")
-            - weight: Total weight in kg (e.g. "1" or "1.0")
-            - pieces: Number of pieces / PCS (e.g. "1")
-            - cost: Total charge in KES if specified. If charge is in RMB, USD, "0RMB", "1", or missing, return "" (empty string).
-
-            CRITICAL: Do NOT invent or fill in fake/placeholder phone numbers, descriptions, or names if they are not explicitly present as real values on the sticker. If a field is missing, not legible, or the photo is not a shipping label, return empty string "".
-            Do not wrap JSON in markdown code blocks. Return raw JSON string only.
-        """.trimIndent()
-
-        val base64Image = bitmap.toBase64()
-        val request = GenerateContentRequest(
-            contents = listOf(
-                Content(
-                    parts = listOf(
-                        Part(text = promptText),
-                        Part(inlineData = InlineData(mimeType = "image/jpeg", data = base64Image))
-                    )
-                )
-            ),
-            generationConfig = GenerationConfig(
-                responseMimeType = "application/json",
-                temperature = 0.1f
-            )
+    private fun isValidPersonName(name: String?): Boolean {
+        if (name.isNullOrBlank()) return false
+        val trimmed = name.trim()
+        if (trimmed == "1" || trimmed == "0" || trimmed.length < 2) return false
+        val uppercase = trimmed.uppercase()
+        val invalidKeywords = listOf(
+            "COMPANY", "SHIPPER", "TEL", "PHONE", "WEIGHT", "PCS", "NATURE",
+            "FREIGHT", "EXPRESS", "LOGISTICS", "HONG KONG", "GUANGZHOU", "NAIROBI",
+            "LIMITED", "CO.", "CO.,", "LTD", "ADD", "ROUTE", "CARRIER", "TOTAL",
+            "CHARGE", "PAYMENT", "REMARK", "DECLARED", "INSURANCE", "AMOUNT", "AFA", "DEX"
         )
-
-        try {
-            val response = RetrofitClient.service.generateContent(apiKey, request)
-            val jsonText = response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text
-            if (!jsonText.isNullOrEmpty()) {
-                Log.d(TAG, "Raw Response from Gemini: $jsonText")
-                val json = JSONObject(jsonText)
-                val extractedTracking = cleanText(json.optString("tracking_number"))
-                val extractedName = cleanText(json.optString("consignee_name"))
-                val extractedOrigin = cleanText(json.optString("origin"))
-                val extractedDest = cleanText(json.optString("destination"))
-                val extractedWeight = cleanText(json.optString("weight"))
-
-                val defaultTracking = if (isCustomPhoto) "DEX-" + System.currentTimeMillis().toString().takeLast(6) else (if (labelId == 1) "1260707534987" else "126070655250")
-                val defaultName = if (isCustomPhoto) "" else (if (labelId == 1) "Beatrice-Pheobe Wangui" else "Charles Ombongi")
-                val defaultOrigin = if (isCustomPhoto) "Hong Kong (HKG)" else (if (labelId == 1) "Hong Kong (HKG)" else "Guangzhou (CAN)")
-                val defaultDest = "Nairobi (NBO)"
-                val defaultWeight = if (isCustomPhoto) "1.0" else (if (labelId == 1) "1.0" else "0.5")
-
-                return@withContext ExtractedStickerData(
-                    trackingNumber = extractedTracking.ifEmpty { defaultTracking },
-                    consigneeName = extractedName.ifEmpty { defaultName },
-                    consigneePhone = cleanPhone(json.optString("consignee_phone")),
-                    origin = extractedOrigin.ifEmpty { defaultOrigin },
-                    destination = extractedDest.ifEmpty { defaultDest },
-                    description = cleanText(json.optString("description")),
-                    mode = cleanText(json.optString("mode")).ifEmpty { "Air Freight" },
-                    weight = extractedWeight.ifEmpty { defaultWeight },
-                    pieces = cleanText(json.optString("pieces")).ifEmpty { "1" },
-                    cost = cleanCost(json.optString("cost"))
-                )
-            } else {
-                Log.w(TAG, "Empty text response from Gemini API.")
-                if (isCustomPhoto) {
-                    return@withContext ExtractedStickerData(
-                        trackingNumber = "DEX-" + System.currentTimeMillis().toString().takeLast(6),
-                        consigneeName = "",
-                        consigneePhone = "",
-                        origin = "Hong Kong (HKG)",
-                        destination = "Nairobi (NBO)",
-                        description = "",
-                        mode = "Air Freight",
-                        weight = "1.0",
-                        pieces = "1",
-                        cost = ""
-                    )
-                }
-                return@withContext getFallbackData(labelId)
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Gemini API request failed: ${e.message}", e)
-            if (isCustomPhoto) {
-                return@withContext ExtractedStickerData(
-                    trackingNumber = "DEX-" + System.currentTimeMillis().toString().takeLast(6),
-                    consigneeName = "",
-                    consigneePhone = "",
-                    origin = "Hong Kong (HKG)",
-                    destination = "Nairobi (NBO)",
-                    description = "",
-                    mode = "Air Freight",
-                    weight = "1.0",
-                    pieces = "1",
-                    cost = ""
-                )
-            }
-            return@withContext getFallbackData(labelId)
-        }
+        if (invalidKeywords.any { uppercase.contains(it) }) return false
+        return trimmed.any { it.isLetter() }
     }
 
-    private fun getFallbackData(labelId: Int): ExtractedStickerData {
-        return if (labelId == 1) {
-            ExtractedStickerData(
-                trackingNumber = "1260707534987",
-                consigneeName = "Beatrice-Pheobe Wangui",
-                consigneePhone = "", // Tel: 1 is a filler on sticker; leave blank for manual entry
-                origin = "Hong Kong (HKG)",
-                destination = "Nairobi (NBO)",
-                description = "", // Nature of goods: 1 is a filler; leave blank for manual entry
-                mode = "Air Freight",
-                weight = "1.0",
-                pieces = "1",
-                cost = "" // Total Charge: 96.00RMB is origin currency; leave blank for manual KES entry
+    /**
+     * Performs LOCAL ON-DEVICE OCR using Google ML Kit Vision Text Recognition directly on the picture bitmap.
+     */
+    suspend fun extractTextWithMlKit(bitmap: Bitmap): ExtractedStickerData = withContext(Dispatchers.IO) {
+        try {
+            val inputImage = com.google.mlkit.vision.common.InputImage.fromBitmap(bitmap, 0)
+            val recognizer = com.google.mlkit.vision.text.TextRecognition.getClient(
+                com.google.mlkit.vision.text.latin.TextRecognizerOptions.DEFAULT_OPTIONS
             )
-        } else {
-            ExtractedStickerData(
-                trackingNumber = "126070655250",
-                consigneeName = "Charles Ombongi",
+            val visionText = com.google.android.gms.tasks.Tasks.await(recognizer.process(inputImage))
+            val rawText = visionText.text ?: ""
+            Log.d(TAG, "ML Kit Local OCR Recognized Raw Text:\n$rawText")
+
+            return@withContext parseRawTextToStickerData(rawText)
+        } catch (e: Exception) {
+            Log.e(TAG, "ML Kit OCR failed: ${e.message}", e)
+            return@withContext ExtractedStickerData(
+                trackingNumber = "",
+                consigneeName = "",
                 consigneePhone = "",
-                origin = "Guangzhou (CAN)",
-                destination = "Nairobi (NBO)",
+                origin = "",
+                destination = "",
                 description = "",
-                mode = "Air Freight",
-                weight = "0.5",
-                pieces = "1",
+                mode = "",
+                weight = "",
+                pieces = "",
                 cost = ""
             )
         }
+    }
+
+    fun isStickerLabel(rawText: String): Boolean {
+        val uppercaseText = rawText.uppercase()
+        val indicators = listOf(
+            "CONSIGNEE", "C/N", "TRACKING", "WAYBILL", "AWB", "NATURE", "GOODS",
+            "WEIGHT", "PCS", "PIECES", "HKG", "CAN", "NBO", "FREIGHT", "SHIPPER",
+            "TEL:", "PHONE:", "DESTINATION", "ORIGIN", "DEX", "TOTAL WEIGHT"
+        )
+        val matchCount = indicators.count { uppercaseText.contains(it) }
+        val hasLongDigits = Regex("""\b\d{8,14}\b""").containsMatchIn(rawText)
+        return matchCount >= 2 || (matchCount >= 1 && hasLongDigits)
+    }
+
+    /**
+     * Parses raw extracted text from a physical package sticker photo into structured sticker data.
+     * Leaves missing/unrecognized fields completely blank ("") for clean manual form entry without hallucinations.
+     */
+    fun parseRawTextToStickerData(rawText: String): ExtractedStickerData {
+        if (!isStickerLabel(rawText)) {
+            return ExtractedStickerData(
+                trackingNumber = "",
+                consigneeName = "",
+                consigneePhone = "",
+                origin = "",
+                destination = "",
+                description = "",
+                mode = "",
+                weight = "",
+                pieces = "",
+                cost = ""
+            )
+        }
+
+        val lines = rawText.lines().map { it.trim() }.filter { it.isNotEmpty() }
+        val fullText = rawText.uppercase()
+
+        // 1. Extract Tracking Number
+        var tracking = ""
+        val trackingRegex = Regex("""\b(126\d{8,12}|DEX-\d+|SF\d{10,14}|AFA\d+|\d{8,14})\b""", RegexOption.IGNORE_CASE)
+        val matchTracking = trackingRegex.find(rawText)
+        if (matchTracking != null) {
+            tracking = matchTracking.value.trim()
+        } else {
+            val digitLine = lines.firstOrNull { l ->
+                l.count { it.isDigit() } >= 8 &&
+                !l.contains("Tel", ignoreCase = true) &&
+                !l.contains("Phone", ignoreCase = true) &&
+                !l.contains("Cost", ignoreCase = true)
+            }
+            if (digitLine != null) {
+                tracking = digitLine.replace(Regex("""[^\d]"""), "").trim()
+            }
+        }
+
+        // 2. Extract Consignee Name (Strict label-value binding)
+        var consigneeName = ""
+        for (i in lines.indices) {
+            val line = lines[i]
+            val isConsigneeLabel = line.contains("Consignee", ignoreCase = true) ||
+                    line.contains("C/N:", ignoreCase = true) ||
+                    line.contains("C/N ", ignoreCase = true) ||
+                    line.contains("Receiver", ignoreCase = true) ||
+                    line.contains("To:", ignoreCase = true)
+            if (isConsigneeLabel) {
+                var extractedVal = line.substringAfter(":", line.substringAfter("Consignee", ""))
+                    .replace(Regex("""(?i)Consignee|C/N|Receiver|Name|To|Company"""), "")
+                    .trim().removePrefix(":").removePrefix("-").trim()
+                
+                // Strip out phone numbers if appended on same line
+                if (extractedVal.contains("Tel", ignoreCase = true) || extractedVal.contains("Phone", ignoreCase = true)) {
+                    extractedVal = extractedVal.substringBefore("Tel", extractedVal.substringBefore("Phone")).trim()
+                }
+
+                if (isValidPersonName(extractedVal)) {
+                    consigneeName = extractedVal
+                    break
+                } else if (i + 1 < lines.size) {
+                    val nextLine = lines[i + 1]
+                    if (isValidPersonName(nextLine)) {
+                        consigneeName = nextLine
+                        break
+                    }
+                }
+            }
+        }
+        consigneeName = cleanText(consigneeName)
+
+        // 3. Extract Consignee Phone
+        var phone = ""
+        val phoneRegex = Regex("""(?:Tel|Phone|Mobile|Contact|Cell)[:\s]*([0-9\+\s-]{7,15})""", RegexOption.IGNORE_CASE)
+        val phoneMatch = phoneRegex.find(rawText)
+        if (phoneMatch != null) {
+            phone = phoneMatch.groupValues[1].trim()
+        } else {
+            for (line in lines) {
+                if (line.contains("Tel", ignoreCase = true) || line.contains("Phone", ignoreCase = true)) {
+                    val p = line.substringAfter(":", "").replace(Regex("""[^\d\+]"""), "").trim()
+                    if (p.length >= 7) {
+                        phone = p
+                        break
+                    }
+                }
+            }
+        }
+        phone = cleanPhone(phone)
+
+        // 4. Extract Route / Origin / Destination via Sticker Template Matching
+        var origin = ""
+        var dest = ""
+
+        // Check explicit sticker origin key-value template labels
+        val originRegex = Regex("""(?:ORIGIN|FROM|SHIPPER ORIGIN|DEPARTURE)[:\s]*([A-Za-z\s\(\)]+)""", RegexOption.IGNORE_CASE)
+        val originMatch = originRegex.find(rawText)
+        if (originMatch != null) {
+            val matchedVal = originMatch.groupValues[1].uppercase()
+            if (matchedVal.contains("CAN") || matchedVal.contains("GUANGZHOU")) origin = "Guangzhou (CAN)"
+            else if (matchedVal.contains("HKG") || matchedVal.contains("HONG KONG")) origin = "Hong Kong (HKG)"
+            else if (matchedVal.contains("PEK") || matchedVal.contains("BEIJING")) origin = "Beijing (PEK)"
+            else if (matchedVal.contains("PVG") || matchedVal.contains("SHANGHAI")) origin = "Shanghai (PVG)"
+            else if (matchedVal.contains("SZX") || matchedVal.contains("SHENZHEN")) origin = "Shenzhen (SZX)"
+        }
+
+        // Check explicit sticker destination key-value template labels
+        val destRegex = Regex("""(?:DESTINATION|DEST|TO|SHIP TO|DELIVER TO)[:\s]*([A-Za-z\s\(\)]+)""", RegexOption.IGNORE_CASE)
+        val destMatch = destRegex.find(rawText)
+        if (destMatch != null) {
+            val matchedVal = destMatch.groupValues[1].uppercase()
+            if (matchedVal.contains("NBO") || matchedVal.contains("NAIROBI") || matchedVal.contains("KENYA")) dest = "Nairobi (NBO)"
+            else if (matchedVal.contains("MBA") || matchedVal.contains("MOMBASA")) dest = "Mombasa (MBA)"
+            else if (matchedVal.contains("KIS") || matchedVal.contains("KISUMU")) dest = "Kisumu (KIS)"
+        }
+
+        // Fallback to route indicator templates if not matched via explicit labels
+        if (origin.isBlank() || dest.isBlank()) {
+            if (fullText.contains("CAN-NBO")) {
+                if (origin.isBlank()) origin = "Guangzhou (CAN)"
+                if (dest.isBlank()) dest = "Nairobi (NBO)"
+            } else if (fullText.contains("HKG-NBO")) {
+                if (origin.isBlank()) origin = "Hong Kong (HKG)"
+                if (dest.isBlank()) dest = "Nairobi (NBO)"
+            } else {
+                if (origin.isBlank()) {
+                    origin = when {
+                        fullText.contains("GUANGZHOU") || fullText.contains("CAN") -> "Guangzhou (CAN)"
+                        fullText.contains("HONG KONG") || fullText.contains("HKG") -> "Hong Kong (HKG)"
+                        fullText.contains("BEIJING") || fullText.contains("PEK") -> "Beijing (PEK)"
+                        fullText.contains("SHANGHAI") || fullText.contains("PVG") -> "Shanghai (PVG)"
+                        fullText.contains("SHENZHEN") || fullText.contains("SZX") -> "Shenzhen (SZX)"
+                        else -> ""
+                    }
+                }
+                if (dest.isBlank()) {
+                    dest = when {
+                        fullText.contains("NAIROBI") || fullText.contains("NBO") -> "Nairobi (NBO)"
+                        fullText.contains("MOMBASA") || fullText.contains("MBA") -> "Mombasa (MBA)"
+                        fullText.contains("KISUMU") || fullText.contains("KIS") -> "Kisumu (KIS)"
+                        else -> ""
+                    }
+                }
+            }
+        }
+
+        // 5. Extract Nature of Goods / Description
+        var desc = ""
+        val descRegex = Regex("""(?:Nature of (?:the )?goods|Description|Goods|Item|Cargo|Commodity)[:\s]*([^\n\r]+)""", RegexOption.IGNORE_CASE)
+        val descMatch = descRegex.find(rawText)
+        if (descMatch != null) {
+            desc = descMatch.groupValues[1].trim()
+        } else {
+            for (line in lines) {
+                if (line.contains("Nature of", ignoreCase = true) || line.contains("Goods", ignoreCase = true)) {
+                    desc = line.substringAfter(":").trim()
+                    break
+                }
+            }
+        }
+        desc = cleanText(desc)
+
+        // 6. Extract Mode
+        var mode = ""
+        if (fullText.contains("SEA FREIGHT") || fullText.contains("SEA")) {
+            mode = "Sea Freight"
+        } else if (fullText.contains("AIR FREIGHT") || fullText.contains("AIR") || fullText.contains("EXPRESS")) {
+            mode = "Air Freight"
+        }
+
+        // 7. Extract Weight
+        var weight = ""
+        val weightRegex = Regex("""(?:Total Weight\(kg\)|Total Weight|Weight|WT|Gross Wt)[:\s]*([\d\.]+)""", RegexOption.IGNORE_CASE)
+        val weightMatch = weightRegex.find(rawText)
+        if (weightMatch != null) {
+            weight = weightMatch.groupValues[1].trim()
+        } else {
+            val kgMatch = Regex("""([\d\.]+)\s*kg""", RegexOption.IGNORE_CASE).find(rawText)
+            if (kgMatch != null) {
+                weight = kgMatch.groupValues[1].trim()
+            }
+        }
+
+        // 8. Extract PCS
+        var pcs = ""
+        val pcsRegex = Regex("""(?:PCS|Pieces|Qty)[:\s]*(\d+)""", RegexOption.IGNORE_CASE)
+        val pcsMatch = pcsRegex.find(rawText)
+        if (pcsMatch != null) {
+            pcs = pcsMatch.groupValues[1].trim()
+        } else if (fullText.contains("1/1")) {
+            pcs = "1"
+        }
+
+        // 9. Extract Cost / Total Charge
+        var cost = ""
+        val costRegex = Regex("""(?:Total Charge|Freight Charge|Charge|Cost)[:\s]*([0-9\.]+)""", RegexOption.IGNORE_CASE)
+        val costMatch = costRegex.find(rawText)
+        if (costMatch != null) {
+            cost = costMatch.groupValues[1].trim()
+        }
+        cost = cleanCost(cost)
+
+        val rawExtracted = ExtractedStickerData(
+            trackingNumber = tracking,
+            consigneeName = consigneeName,
+            consigneePhone = phone,
+            origin = origin,
+            destination = dest,
+            description = desc,
+            mode = mode,
+            weight = weight,
+            pieces = pcs,
+            cost = cost
+        )
+
+        return CargoStickerSanitizer.sanitizeAndMap(rawExtracted)
+    }
+
+object CargoStickerSanitizer {
+    /**
+     * Sanitizes extracted field data against known cargo sticker patterns before assigning to form fields.
+     */
+    fun sanitizeAndMap(raw: ExtractedStickerData): ExtractedStickerData {
+        return ExtractedStickerData(
+            trackingNumber = sanitizeTracking(raw.trackingNumber),
+            consigneeName = sanitizeName(raw.consigneeName),
+            consigneePhone = sanitizePhone(raw.consigneePhone),
+            origin = sanitizeOrigin(raw.origin),
+            destination = sanitizeDestination(raw.destination),
+            description = sanitizeDescription(raw.description),
+            mode = sanitizeMode(raw.mode),
+            weight = sanitizeWeight(raw.weight),
+            pieces = sanitizePieces(raw.pieces),
+            cost = sanitizeCost(raw.cost)
+        )
+    }
+
+    private fun sanitizeTracking(input: String): String {
+        if (input.isBlank()) return ""
+        val clean = input.uppercase().replace(Regex("""[^A-Z0-9-]"""), "").trim()
+        return if (clean.length >= 4) clean else ""
+    }
+
+    private fun sanitizeName(input: String): String {
+        if (input.isBlank()) return ""
+        val clean = input.replace(Regex("""(?i)\b(consignee|c/n|to|receiver|tel|phone|contact|name|company)\b"""), "")
+            .replace(Regex("""[:\-#]"""), " ")
+            .trim()
+        return if (clean.length >= 2 && !clean.all { it.isDigit() }) clean else ""
+    }
+
+    private fun sanitizePhone(input: String): String {
+        if (input.isBlank()) return ""
+        val clean = input.replace(Regex("""[^\d\+]"""), "").trim()
+        return if (clean.length >= 7) clean else ""
+    }
+
+    private fun sanitizeOrigin(input: String): String {
+        val upper = input.uppercase()
+        return when {
+            upper.contains("CAN") || upper.contains("GUANGZHOU") -> "Guangzhou (CAN)"
+            upper.contains("HKG") || upper.contains("HONG KONG") -> "Hong Kong (HKG)"
+            upper.contains("PEK") || upper.contains("BEIJING") -> "Beijing (PEK)"
+            upper.contains("PVG") || upper.contains("SHANGHAI") -> "Shanghai (PVG)"
+            upper.contains("SZX") || upper.contains("SHENZHEN") -> "Shenzhen (SZX)"
+            upper.contains("DXB") || upper.contains("DUBAI") -> "Dubai (DXB)"
+            else -> ""
+        }
+    }
+
+    private fun sanitizeDestination(input: String): String {
+        val upper = input.uppercase()
+        return when {
+            upper.contains("NBO") || upper.contains("NAIROBI") || upper.contains("KENYA") -> "Nairobi (NBO)"
+            upper.contains("MBA") || upper.contains("MOMBASA") -> "Mombasa (MBA)"
+            upper.contains("KIS") || upper.contains("KISUMU") -> "Kisumu (KIS)"
+            upper.contains("EBB") || upper.contains("ENTEBBE") -> "Entebbe (EBB)"
+            upper.contains("DAR") -> "Dar es Salaam (DAR)"
+            upper.contains("KGL") || upper.contains("KIGALI") -> "Kigali (KGL)"
+            else -> ""
+        }
+    }
+
+    private fun sanitizeDescription(input: String): String {
+        if (input.isBlank()) return ""
+        val clean = input.replace(Regex("""(?i)\b(nature of goods|description|goods|item|cargo|commodity)\b"""), "")
+            .replace(Regex("""[:\-#]"""), " ")
+            .trim()
+        return if (clean.length >= 2) clean else ""
+    }
+
+    private fun sanitizeMode(input: String): String {
+        val upper = input.uppercase()
+        return when {
+            upper.contains("SEA") -> "Sea Freight"
+            upper.contains("AIR") || upper.contains("EXPRESS") -> "Air Freight"
+            else -> ""
+        }
+    }
+
+    private fun sanitizeWeight(input: String): String {
+        if (input.isBlank()) return ""
+        val numMatch = Regex("""([\d\.]+)""").find(input)
+        val num = numMatch?.value?.toDoubleOrNull()
+        return if (num != null && num > 0.0) {
+            if (num == num.toLong().toDouble()) num.toLong().toString() else num.toString()
+        } else ""
+    }
+
+    private fun sanitizePieces(input: String): String {
+        if (input.isBlank()) return ""
+        val numMatch = Regex("""(\d+)""").find(input)
+        val num = numMatch?.value?.toIntOrNull()
+        return if (num != null && num > 0) num.toString() else ""
+    }
+
+    private fun sanitizeCost(input: String): String {
+        if (input.isBlank()) return ""
+        val numMatch = Regex("""([\d\.]+)""").find(input)
+        val num = numMatch?.value?.toDoubleOrNull()
+        return if (num != null && num >= 0.0) {
+            if (num == num.toLong().toDouble()) num.toLong().toString() else String.format(java.util.Locale.US, "%.2f", num)
+        } else ""
+    }
+}
+
+    /**
+     * Extracts shipping label details from a camera bitmap.
+     * Strictly uses Camera Image -> ML Kit Text Recognition -> Extracted Text.
+     */
+    suspend fun extractStickerData(bitmap: Bitmap, labelId: Int, isCustomPhoto: Boolean = false): ExtractedStickerData = withContext(Dispatchers.IO) {
+        val mlKitExtracted = extractTextWithMlKit(bitmap)
+        Log.i(TAG, "ML Kit Local OCR Result (Camera -> CameraX/Bitmap -> ML Kit Text Recognition): $mlKitExtracted")
+        return@withContext mlKitExtracted
     }
 
     /**

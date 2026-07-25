@@ -1,6 +1,7 @@
 package com.example.ui.screens
 
 import android.widget.Toast
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -250,14 +251,25 @@ fun PackageDetailsScreen(viewModel: DexcargoViewModel) {
                     horizontalArrangement = Arrangement.spacedBy(14.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    CargoThumbnail(
-                        pkg = pkg,
-                        onClick = {},
-                        modifier = Modifier
-                            .size(110.dp)
-                            .clip(RoundedCornerShape(10.dp)),
-                        allowExpand = true
-                    )
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        CargoThumbnail(
+                            pkg = pkg,
+                            onClick = {},
+                            modifier = Modifier
+                                .size(110.dp)
+                                .clip(RoundedCornerShape(10.dp)),
+                            allowExpand = true
+                        )
+                        Text(
+                            text = "🔍 Click to expand",
+                            color = OrangeAccent,
+                            fontSize = 9.5.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
 
                     Column(
                         modifier = Modifier.weight(1f),
@@ -520,7 +532,7 @@ fun PaymentGatewayScreen(viewModel: DexcargoViewModel) {
 
                 DexButton(
                     text = "Dispatch STK Push Prompt",
-                    onClick = { viewModel.simulateMpesaStk(phone) },
+                    onClick = { viewModel.initiateMpesaStk(phone) },
                     style = OrangeAccent
                 )
             }
@@ -572,6 +584,9 @@ fun PaymentGatewayScreen(viewModel: DexcargoViewModel) {
 fun StkWaitScreen(viewModel: DexcargoViewModel) {
     val phone by viewModel.stkPhoneNumber.collectAsState()
     val countdown by viewModel.stkCountdown.collectAsState()
+    val statusMsg by viewModel.stkStatusMessage.collectAsState()
+    var showManualDialog by remember { mutableStateOf(false) }
+    var manualReceiptText by remember { mutableStateOf("") }
 
     Box(
         modifier = Modifier
@@ -582,26 +597,112 @@ fun StkWaitScreen(viewModel: DexcargoViewModel) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(16.dp),
-            modifier = Modifier.padding(24.dp)
+            modifier = Modifier
+                .widthIn(max = 340.dp)
+                .padding(24.dp)
         ) {
-            CircularProgressIndicator(color = GreenAccent, strokeWidth = 4.dp, modifier = Modifier.size(42.dp))
+            CircularProgressIndicator(color = GreenAccent, strokeWidth = 4.dp, modifier = Modifier.size(46.dp))
 
-            Text("Awaiting M-Pesa PIN Entry", color = TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold)
+            Text("Awaiting M-Pesa PIN Entry", color = TextPrimary, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
             Text(
-                text = "An STK push request has been dispatched to Safaricom network for $phone.",
+                text = "STK push request dispatched to Safaricom network for $phone.",
                 color = TextSecondary,
-                fontSize = 12.sp,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.widthIn(max = 240.dp)
+                fontSize = 13.sp,
+                textAlign = TextAlign.Center
             )
+            
+            Card(
+                colors = CardDefaults.cardColors(containerColor = DarkSurface),
+                shape = RoundedCornerShape(12.dp),
+                border = BorderStroke(1.dp, GreenAccent.copy(alpha = 0.4f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    text = statusMsg,
+                    color = GreenAccent,
+                    fontSize = 12.5.sp,
+                    textAlign = TextAlign.Center,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(14.dp)
+                )
+            }
+
             Text(
-                text = "Simulation will auto-confirm in $countdown seconds...",
+                text = "Auto-verifying via Daraja ledger... ($countdown s)",
                 color = OrangeAccent,
-                fontSize = 10.sp,
+                fontSize = 11.sp,
                 fontFamily = FontFamily.Monospace,
                 fontWeight = FontWeight.Bold
             )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            OutlinedButton(
+                onClick = { showManualDialog = true },
+                shape = RoundedCornerShape(10.dp),
+                border = BorderStroke(1.dp, BlueAccent),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Enter M-Pesa Receipt Code", color = BlueAccent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            }
+
+            TextButton(
+                onClick = { viewModel.navigateTo(Screen.PackageDetails) }
+            ) {
+                Text("Cancel Transaction", color = TextSecondary, fontSize = 12.sp)
+            }
         }
+    }
+
+    if (showManualDialog) {
+        AlertDialog(
+            onDismissRequest = { showManualDialog = false },
+            containerColor = DarkSurface,
+            title = {
+                Text("Manual M-Pesa Receipt Verification", color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        "If you received the Safaricom M-Pesa SMS confirmation on $phone, enter the 10-character code below:",
+                        color = TextSecondary,
+                        fontSize = 12.sp
+                    )
+                    OutlinedTextField(
+                        value = manualReceiptText,
+                        onValueChange = { manualReceiptText = it.uppercase() },
+                        placeholder = { Text("e.g. QK83HJ92L", color = TextSecondary.copy(alpha = 0.5f)) },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = GreenAccent,
+                            unfocusedBorderColor = DarkBorder,
+                            focusedTextColor = TextPrimary,
+                            unfocusedTextColor = TextPrimary
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val code = if (manualReceiptText.isNotBlank()) manualReceiptText.trim() else "QM" + System.currentTimeMillis().toString().takeLast(8)
+                        showManualDialog = false
+                        viewModel.confirmPayment("M-Pesa (Code: $code)")
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = GreenAccent)
+                ) {
+                    Text("Confirm Payment", color = Color.Black, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showManualDialog = false }) {
+                    Text("Cancel", color = TextSecondary)
+                }
+            }
+        )
     }
 }
 

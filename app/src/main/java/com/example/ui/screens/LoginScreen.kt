@@ -10,6 +10,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.LocalShipping
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -18,6 +19,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -52,32 +56,45 @@ fun LoginScreen(viewModel: DexcargoViewModel) {
             Spacer(modifier = Modifier.weight(0.4f))
 
             // REAL COMPANY BRANDING LOGO
-            androidx.compose.foundation.Image(
-                painter = androidx.compose.ui.res.painterResource(id = com.example.R.drawable.dex_brand_logo),
-                contentDescription = "DEX Logistics Logo",
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
                 modifier = Modifier
-                    .size(90.dp)
-                    .clip(RoundedCornerShape(16.dp))
-                    .border(2.dp, OrangeAccent.copy(alpha = 0.6f), RoundedCornerShape(16.dp))
-            )
+                    .fillMaxWidth(0.92f)
+                    .clip(RoundedCornerShape(22.dp))
+                    .background(DarkSurface)
+                    .border(1.5.dp, DarkBorder, RoundedCornerShape(22.dp))
+                    .padding(horizontal = 20.dp, vertical = 22.dp)
+            ) {
+                androidx.compose.foundation.Image(
+                    painter = androidx.compose.ui.res.painterResource(id = com.example.R.drawable.dex_brand_logo),
+                    contentDescription = "DEX Logistics Real Company Branding Logo",
+                    modifier = Modifier
+                        .height(130.dp)
+                        .fillMaxWidth(0.9f)
+                        .clip(RoundedCornerShape(16.dp))
+                        .border(1.dp, Color(0xFF3B82F6).copy(alpha = 0.4f), RoundedCornerShape(16.dp)),
+                    contentScale = ContentScale.Fit
+                )
 
-            Spacer(modifier = Modifier.height(14.dp))
+                Spacer(modifier = Modifier.height(16.dp))
 
-            Text(
-                text = "DEX LOGISTICS",
-                color = TextPrimary,
-                fontSize = 26.sp,
-                fontWeight = FontWeight.Black,
-                letterSpacing = (-0.5).sp,
-                fontFamily = FontFamily.SansSerif
-            )
-            Text(
-                text = "Secure Terminal Operations Portal",
-                color = TextSecondary,
-                fontSize = 11.5.sp,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.padding(top = 3.dp)
-            )
+                Text(
+                    text = "DEX LOGISTICS",
+                    color = TextPrimary,
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.Black,
+                    letterSpacing = 0.5.sp,
+                    fontFamily = FontFamily.SansSerif
+                )
+                Text(
+                    text = "Secure Terminal Operations Portal",
+                    color = TextSecondary,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(top = 2.dp)
+                )
+            }
 
             Spacer(modifier = Modifier.weight(0.5f))
 

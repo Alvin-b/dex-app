@@ -17,6 +17,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -270,6 +272,7 @@ fun EnterPinScreen(viewModel: DexcargoViewModel) {
     val quickEmp by viewModel.quickAccessEmployee.collectAsState()
     val enteredPin by viewModel.enteredPin.collectAsState()
     val errorMsg by viewModel.pinErrorMessage.collectAsState()
+    val userPhoto by viewModel.userProfilePhotoBitmap.collectAsState()
     val context = LocalContext.current
     val activity = context as? androidx.fragment.app.FragmentActivity
 
@@ -327,12 +330,21 @@ fun EnterPinScreen(viewModel: DexcargoViewModel) {
                 .border(2.dp, BlueAccent, CircleShape),
             contentAlignment = Alignment.Center
         ) {
-            Text(
-                text = quickEmp?.name?.take(2)?.uppercase() ?: "DX",
-                color = BlueAccent,
-                fontSize = 24.sp,
-                fontWeight = FontWeight.ExtraBold
-            )
+            if (userPhoto != null) {
+                androidx.compose.foundation.Image(
+                    bitmap = userPhoto!!.asImageBitmap(),
+                    contentDescription = "Profile Photo",
+                    modifier = Modifier.fillMaxSize().clip(CircleShape),
+                    contentScale = ContentScale.Crop
+                )
+            } else {
+                Text(
+                    text = quickEmp?.name?.take(2)?.uppercase() ?: "DX",
+                    color = BlueAccent,
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.ExtraBold
+                )
+            }
         }
 
         Spacer(modifier = Modifier.height(16.dp))

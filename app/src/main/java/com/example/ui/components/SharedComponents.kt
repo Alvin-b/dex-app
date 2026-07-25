@@ -10,6 +10,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -44,6 +45,36 @@ import com.example.ui.theme.*
 object NetworkMonitor {
     val isOnline = MutableStateFlow(true)
     val isSyncing = MutableStateFlow(false)
+}
+
+fun loadSafeBitmapResource(context: android.content.Context, resId: Int, maxDimension: Int = 600): androidx.compose.ui.graphics.ImageBitmap? {
+    return try {
+        val options = android.graphics.BitmapFactory.Options().apply {
+            inJustDecodeBounds = true
+        }
+        android.graphics.BitmapFactory.decodeResource(context.resources, resId, options)
+        
+        val width = options.outWidth
+        val height = options.outHeight
+        var sampleSize = 1
+        if (width > maxDimension || height > maxDimension) {
+            val halfWidth = width / 2
+            val halfHeight = height / 2
+            while ((halfWidth / sampleSize) >= (maxDimension / 2) || (halfHeight / sampleSize) >= (maxDimension / 2)) {
+                sampleSize *= 2
+            }
+        }
+        
+        val decodeOptions = android.graphics.BitmapFactory.Options().apply {
+            inSampleSize = sampleSize
+            inPreferredConfig = android.graphics.Bitmap.Config.ARGB_8888
+        }
+        val bmp = android.graphics.BitmapFactory.decodeResource(context.resources, resId, decodeOptions)
+        bmp?.asImageBitmap()
+    } catch (e: Throwable) {
+        e.printStackTrace()
+        null
+    }
 }
 
 @Composable
@@ -427,13 +458,42 @@ fun CargoThumbnail(
             },
         contentAlignment = Alignment.Center
     ) {
-        if (bitmap != null && (!pkg.packagePhotoUrl.isNullOrBlank() && pkg.packagePhotoUrl != "simulated_url")) {
+        if (bitmap != null) {
             Image(
                 bitmap = bitmap.asImageBitmap(),
                 contentDescription = "Package Photo",
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop
             )
+            if (allowExpand) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(4.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Color.Black.copy(alpha = 0.75f))
+                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Search,
+                            contentDescription = "Expand",
+                            tint = OrangeAccent,
+                            modifier = Modifier.size(10.dp)
+                        )
+                        Text(
+                            text = "ZOOM",
+                            color = Color.White,
+                            fontSize = 8.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            letterSpacing = 0.5.sp
+                        )
+                    }
+                }
+            }
         } else {
             val strokeColor = TextSecondary
             val accentColor = OrangeAccent
@@ -471,33 +531,104 @@ fun CargoThumbnail(
         Dialog(
             onDismissRequest = { isExpanded = false }
         ) {
-            Box(
+            Card(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(1f)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(Color.Black)
-                    .border(2.dp, OrangeAccent, RoundedCornerShape(16.dp))
-                    .clickable { isExpanded = false }, // Clicking inside/outside goes back
-                contentAlignment = Alignment.Center
+                    .fillMaxWidth(0.95f)
+                    .clip(RoundedCornerShape(20.dp))
+                    .border(2.dp, OrangeAccent, RoundedCornerShape(20.dp)),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF0F111A))
             ) {
-                Image(
-                    bitmap = bitmap.asImageBitmap(),
-                    contentDescription = "Expanded Package Photo",
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Fit
-                )
- 
-                // Floating close indicator
-                Box(
+                Column(
                     modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(12.dp)
-                        .clip(CircleShape)
-                        .background(Color.Black.copy(alpha = 0.6f))
-                        .padding(horizontal = 10.dp, vertical = 6.dp)
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Text("✕ Close", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                    // Header Row
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(
+                                text = "PACKAGE REGISTRATION PHOTO",
+                                color = OrangeAccent,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Monospace
+                            )
+                            Text(
+                                text = "Tracking: ${pkg.id}",
+                                color = TextPrimary,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                        }
+
+                        IconButton(
+                            onClick = { isExpanded = false },
+                            modifier = Modifier
+                                .size(32.dp)
+                                .clip(CircleShape)
+                                .background(DarkSurfaceVariant)
+                        ) {
+                            Text("✕", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        }
+                    }
+
+                    // Full Image Container
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(280.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Color.Black)
+                            .border(1.dp, DarkBorder, RoundedCornerShape(12.dp)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Image(
+                            bitmap = bitmap.asImageBitmap(),
+                            contentDescription = "Expanded Package Photo",
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Fit
+                        )
+                    }
+
+                    // Photo Info & Metadata Footer
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(DarkSurfaceVariant)
+                            .padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("Consignee:", color = TextSecondary, fontSize = 11.sp)
+                            Text(pkg.consignee, color = TextPrimary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                        if (!pkg.packagePhotoCapturedAt.isNullOrBlank()) {
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text("Captured At:", color = TextSecondary, fontSize = 11.sp)
+                                Text(pkg.packagePhotoCapturedAt, color = TextMuted, fontSize = 10.5.sp)
+                            }
+                        }
+                        if (!pkg.packagePhotoCapturedBy.isNullOrBlank()) {
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text("Captured By:", color = TextSecondary, fontSize = 11.sp)
+                                Text(pkg.packagePhotoCapturedBy, color = TextMuted, fontSize = 10.5.sp)
+                            }
+                        }
+                    }
+
+                    DexButton(
+                        text = "Close Preview",
+                        onClick = { isExpanded = false },
+                        style = DarkSurfaceVariant,
+                        textColor = TextPrimary
+                    )
                 }
             }
         }

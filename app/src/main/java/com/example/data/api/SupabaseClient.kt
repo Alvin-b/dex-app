@@ -40,8 +40,9 @@ data class SignupRequest(
 )
 
 data class SignupResponse(
-    @Json(name = "id") val id: String?,
-    @Json(name = "email") val email: String?
+    @Json(name = "id") val id: String? = null,
+    @Json(name = "email") val email: String? = null,
+    @Json(name = "user") val user: UserResponse? = null
 )
 
 data class RefreshRequest(
@@ -100,16 +101,19 @@ data class CargoPackageApi(
 
 data class PaymentNotificationApi(
     @Json(name = "id") val id: String,
-    @Json(name = "notification_number") val notificationNumber: String,
-    @Json(name = "evidence_type") val evidenceType: String,
+    @Json(name = "notification_number") val notificationNumber: String? = null,
+    @Json(name = "evidence_type") val evidenceType: String? = null,
     @Json(name = "image_url") val imageUrl: String? = null,
     @Json(name = "text_content") val textContent: String? = null,
-    @Json(name = "uploaded_by") val uploadedBy: String,
-    @Json(name = "uploaded_at") val uploadedAt: String,
+    @Json(name = "uploaded_by") val uploadedBy: String? = null,
+    @Json(name = "uploaded_at") val uploadedAt: String? = null,
     @Json(name = "status") val status: String,
     @Json(name = "amount") val amount: Int? = null,
     @Json(name = "sender_phone") val senderPhone: String? = null,
-    @Json(name = "timestamp") val timestamp: String? = null
+    @Json(name = "timestamp") val timestamp: String? = null,
+    @Json(name = "mpesa_receipt") val mpesaReceipt: String? = null,
+    @Json(name = "result_code") val resultCode: String? = null,
+    @Json(name = "result_desc") val resultDesc: String? = null
 )
 
 data class PaymentAllocationApi(
@@ -129,6 +133,14 @@ data class AuditLogApi(
     @Json(name = "actor") val actor: String,
     @Json(name = "timestamp") val timestamp: String,
     @Json(name = "details") val details: String
+)
+
+data class AppReleaseApi(
+    @Json(name = "id") val id: String? = null,
+    @Json(name = "version_name") val versionName: String? = null,
+    @Json(name = "build_number") val buildNumber: Int? = null,
+    @Json(name = "release_notes") val releaseNotes: String? = null,
+    @Json(name = "download_url") val downloadUrl: String? = null
 )
 
 data class BroadcastMessageApi(
@@ -161,6 +173,38 @@ data class CommissionRateApi(
     @Json(name = "role") val role: String,
     @Json(name = "rate") val rate: Double
 )
+
+data class StkPushRequest(
+    @Json(name = "phone") val phone: String,
+    @Json(name = "amount") val amount: Int,
+    @Json(name = "tracking_number") val trackingNumber: String,
+    @Json(name = "description") val description: String? = null
+)
+
+data class StkPushResponse(
+    @Json(name = "ok") val ok: Boolean = false,
+    @Json(name = "notification_id") val notificationId: String? = null,
+    @Json(name = "notification_number") val notificationNumber: String? = null,
+    @Json(name = "checkout_request_id") val checkoutRequestId: String? = null,
+    @Json(name = "merchant_request_id") val merchantRequestId: String? = null,
+    @Json(name = "customer_message") val customerMessage: String? = null,
+    @Json(name = "error") val error: String? = null
+)
+
+interface MpesaApi {
+    @POST("api/mpesa-stk-push")
+    suspend fun stkPush(
+        @Header("Authorization") authHeader: String,
+        @Body req: StkPushRequest
+    ): Response<StkPushResponse>
+
+    @POST
+    suspend fun stkPushDynamic(
+        @Url url: String,
+        @Header("Authorization") authHeader: String,
+        @Body req: StkPushRequest
+    ): Response<StkPushResponse>
+}
 
 // --- RETROFIT INTERFACE ---
 
@@ -232,7 +276,30 @@ interface SupabaseApi {
     suspend fun createUserRole(
         @Header("apikey") apiKey: String,
         @Header("Authorization") authHeader: String,
+        @Header("Prefer") prefer: String = "resolution=merge-duplicates",
         @Body role: UserRoleResponse
+    ): Response<Unit>
+
+    @POST("rest/v1/profiles")
+    suspend fun createProfile(
+        @Header("apikey") apiKey: String,
+        @Header("Authorization") authHeader: String,
+        @Header("Prefer") prefer: String = "resolution=merge-duplicates",
+        @Body profile: ProfileResponse
+    ): Response<Unit>
+
+    @DELETE("rest/v1/profiles")
+    suspend fun deleteProfile(
+        @Header("apikey") apiKey: String,
+        @Header("Authorization") authHeader: String,
+        @Query("id") idFilter: String
+    ): Response<Unit>
+
+    @DELETE("rest/v1/user_roles")
+    suspend fun deleteUserRole(
+        @Header("apikey") apiKey: String,
+        @Header("Authorization") authHeader: String,
+        @Query("user_id") userIdFilter: String
     ): Response<Unit>
 
     @GET("rest/v1/cargo_packages")
@@ -284,6 +351,14 @@ interface SupabaseApi {
         @Query("order") order: String = "uploaded_at.desc"
     ): List<PaymentNotificationApi>
 
+    @GET("rest/v1/payment_notifications")
+    suspend fun getPaymentNotificationById(
+        @Header("apikey") apiKey: String,
+        @Header("Authorization") authHeader: String,
+        @Query("id") idFilter: String,
+        @Query("select") select: String = "status,mpesa_receipt,result_code,result_desc,amount,sender_phone"
+    ): List<PaymentNotificationApi>
+
     @POST("rest/v1/payment_notifications")
     suspend fun insertPaymentNotification(
         @Header("apikey") apiKey: String,
@@ -312,6 +387,15 @@ interface SupabaseApi {
         @Header("Authorization") authHeader: String,
         @Body body: PaymentAllocationApi
     ): Response<Unit>
+
+    @GET("rest/v1/app_releases")
+    suspend fun getLatestRelease(
+        @Header("apikey") apiKey: String = SupabaseClient.API_KEY,
+        @Header("Authorization") authHeader: String = "Bearer ${SupabaseClient.API_KEY}",
+        @Query("select") select: String = "*",
+        @Query("order") order: String = "build_number.desc",
+        @Query("limit") limit: Int = 1
+    ): List<AppReleaseApi>
 
     @GET("rest/v1/audit_logs")
     suspend fun getAuditLogs(
@@ -557,8 +641,17 @@ object SupabaseClient {
 
     val api: SupabaseApi = retrofit.create(SupabaseApi::class.java)
 
+    private val mpesaRetrofit: Retrofit = Retrofit.Builder()
+        .baseUrl("https://project--5e9b81ad-6c63-4331-af7a-01008019e17f.lovable.app/")
+        .client(okHttpClient)
+        .addConverterFactory(MoshiConverterFactory.create(moshi))
+        .build()
+
+    val mpesaApi: MpesaApi = mpesaRetrofit.create(MpesaApi::class.java)
+
     fun getBearerHeader(): String {
-        return "Bearer ${accessToken ?: ""}"
+        val token = accessToken
+        return if (!token.isNullOrBlank()) "Bearer $token" else "Bearer $API_KEY"
     }
 
     fun isUserLoggedIn(): Boolean {
@@ -641,12 +734,12 @@ fun PaymentNotification.toApi(): PaymentNotificationApi = PaymentNotificationApi
 
 fun PaymentNotificationApi.toEntity(): PaymentNotification = PaymentNotification(
     id = id,
-    notificationNumber = notificationNumber,
-    evidenceType = evidenceType,
+    notificationNumber = notificationNumber ?: "",
+    evidenceType = evidenceType ?: "STK",
     imageUrl = imageUrl,
     textContent = textContent,
-    uploadedBy = uploadedBy,
-    uploadedAt = uploadedAt,
+    uploadedBy = uploadedBy ?: "System",
+    uploadedAt = uploadedAt ?: "",
     status = status,
     amount = amount,
     senderPhone = senderPhone,

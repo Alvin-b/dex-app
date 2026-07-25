@@ -20,6 +20,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
@@ -39,6 +41,56 @@ import com.example.ui.theme.*
 fun ProfileSettingsScreen(viewModel: DexcargoViewModel) {
     val context = LocalContext.current
     val currentEmp by viewModel.currentEmployee.collectAsState()
+    val userPhoto by viewModel.userProfilePhotoBitmap.collectAsState()
+    var showPhotoDialog by remember { mutableStateOf(false) }
+
+    if (showPhotoDialog) {
+        AlertDialog(
+            onDismissRequest = { showPhotoDialog = false },
+            title = { Text("Profile Photo Options", color = TextPrimary, fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Choose how you would like to set your profile picture:", color = TextSecondary, fontSize = 12.sp)
+                    DexButton(
+                        text = "📸 Take Photo (Camera)",
+                        onClick = {
+                            showPhotoDialog = false
+                            viewModel.triggerProfileCameraEvent.tryEmit(Unit)
+                        },
+                        style = OrangeAccent
+                    )
+                    DexButton(
+                        text = "🖼️ Choose Photo (Gallery)",
+                        onClick = {
+                            showPhotoDialog = false
+                            viewModel.triggerProfileGalleryEvent.tryEmit(Unit)
+                        },
+                        style = BlueAccent,
+                        textColor = Color.White
+                    )
+                    if (userPhoto != null) {
+                        DexButton(
+                            text = "🗑️ Remove Photo",
+                            onClick = {
+                                showPhotoDialog = false
+                                viewModel.removeProfilePhoto(context)
+                            },
+                            style = DarkSurfaceVariant,
+                            textColor = Color.Red
+                        )
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { showPhotoDialog = false }) {
+                    Text("Cancel", color = TextSecondary)
+                }
+            },
+            containerColor = DarkSurface,
+            shape = RoundedCornerShape(16.dp)
+        )
+    }
     
     // Manage PIN state locally in fields
     var localPin by remember { mutableStateOf(currentEmp?.pin ?: "") }
@@ -52,6 +104,7 @@ fun ProfileSettingsScreen(viewModel: DexcargoViewModel) {
             confirmPin = it.pin ?: ""
             localBiometric = it.biometricEnabled
         }
+        viewModel.loadUserProfilePhoto(context)
     }
 
     val roleLabel = when (currentEmp?.role) {
@@ -103,20 +156,40 @@ fun ProfileSettingsScreen(viewModel: DexcargoViewModel) {
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(80.dp)
+                            .size(84.dp)
                             .clip(CircleShape)
                             .background(
                                 Brush.linearGradient(
                                     colors = listOf(badgeColor, badgeColor.copy(alpha = 0.4f))
                                 )
-                            ),
+                            )
+                            .border(2.dp, badgeColor, CircleShape)
+                            .clickable { showPhotoDialog = true },
                         contentAlignment = Alignment.Center
                     ) {
+                        if (userPhoto != null) {
+                            androidx.compose.foundation.Image(
+                                bitmap = userPhoto!!.asImageBitmap(),
+                                contentDescription = "Profile Photo",
+                                modifier = Modifier.fillMaxSize().clip(CircleShape),
+                                contentScale = ContentScale.Crop
+                            )
+                        } else {
+                            Text(
+                                text = currentEmp?.name?.split(" ")?.mapNotNull { it.takeOrNull(1) }?.joinToString("")?.take(2)?.uppercase() ?: "DX",
+                                color = Color.White,
+                                fontSize = 28.sp,
+                                fontWeight = FontWeight.Black
+                            )
+                        }
+                    }
+
+                    TextButton(onClick = { showPhotoDialog = true }) {
                         Text(
-                            text = currentEmp?.name?.split(" ")?.mapNotNull { it.takeOrNull(1) }?.joinToString("")?.take(2)?.uppercase() ?: "DX",
-                            color = Color.White,
-                            fontSize = 28.sp,
-                            fontWeight = FontWeight.Black
+                            text = if (userPhoto != null) "📷 Change Photo" else "📷 Upload Profile Photo",
+                            color = OrangeAccent,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
                         )
                     }
 
@@ -277,6 +350,236 @@ fun ProfileSettingsScreen(viewModel: DexcargoViewModel) {
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.fillMaxWidth()
                     )
+                }
+            }
+
+            // SYSTEM UPDATES & DATABASE SYNC CARD
+            Text(
+                text = "SYSTEM UPDATES & SYNCHRONIZATION",
+                color = TextSecondary,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 0.5.sp
+            )
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = DarkSurface),
+                border = BorderStroke(1.dp, DarkBorder),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(38.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(BlueAccent.copy(alpha = 0.15f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Sync,
+                                contentDescription = "Sync",
+                                tint = BlueAccent,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "App Updates & Database Synchronization",
+                                color = TextPrimary,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            val currVer by viewModel.installedVersionName.collectAsState()
+                            val currBuild by viewModel.installedBuildNumber.collectAsState()
+                            Text(
+                                text = "Installed Version: $currVer (Build $currBuild) • Auto-Sync Enabled",
+                                color = GreenAccent,
+                                fontSize = 10.5.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+
+                    LaunchedEffect(Unit) {
+                        viewModel.loadInstalledVersion(context)
+                    }
+
+                    var isManualSyncing by remember { mutableStateOf(false) }
+                    var isCheckingUpdate by remember { mutableStateOf(false) }
+                    var updatePromptMessage by remember { mutableStateOf<String?>(null) }
+                    var updateDownloadUrl by remember { mutableStateOf<String?>(null) }
+
+                    val isDownloadingRelease by viewModel.isAppUpdateDownloading.collectAsState()
+                    val downloadProgress by viewModel.appUpdateProgress.collectAsState()
+                    val downloadStatusText by viewModel.appUpdateStatusText.collectAsState()
+
+                    if (updatePromptMessage != null) {
+                        AlertDialog(
+                            onDismissRequest = { updatePromptMessage = null },
+                            title = {
+                                Text("New App Release Available (${viewModel.targetUpdateVersionName})", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                            },
+                            text = {
+                                Text(
+                                    updatePromptMessage ?: "",
+                                    color = TextSecondary,
+                                    fontSize = 13.sp
+                                )
+                            },
+                            confirmButton = {
+                                Button(
+                                    onClick = {
+                                        updatePromptMessage = null
+                                        viewModel.startInAppUpdateDownload(context) { success, msg ->
+                                            Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                                        }
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = GreenAccent)
+                                ) {
+                                    Text("Start In-App Update", color = Color(0xFF0F172A), fontWeight = FontWeight.Bold)
+                                }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { updatePromptMessage = null }) {
+                                    Text("Dismiss", color = TextSecondary)
+                                }
+                            },
+                            containerColor = DarkSurface,
+                            shape = RoundedCornerShape(16.dp)
+                        )
+                    }
+
+                    if (isDownloadingRelease) {
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = DarkSurfaceVariant),
+                            shape = RoundedCornerShape(12.dp),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, GreenAccent),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 6.dp)
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(14.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text("📥 Downloading In-App Release Update...", color = GreenAccent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                    Text("${(downloadProgress * 100).toInt()}%", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold)
+                                }
+                                LinearProgressIndicator(
+                                    progress = downloadProgress,
+                                    color = GreenAccent,
+                                    trackColor = DarkBorder,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(6.dp)
+                                        .clip(RoundedCornerShape(3.dp))
+                                )
+                                Text(
+                                    text = downloadStatusText,
+                                    color = TextSecondary,
+                                    fontSize = 11.sp,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = {
+                                isCheckingUpdate = true
+                                viewModel.checkForAppUpdates(context) { success, msg, url ->
+                                    isCheckingUpdate = false
+                                    if (success) {
+                                        updatePromptMessage = msg
+                                        updateDownloadUrl = url
+                                    } else {
+                                        Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                                    }
+                                }
+                            },
+                            enabled = !isCheckingUpdate && !isManualSyncing,
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.buttonColors(containerColor = PurpleAccent),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            if (isCheckingUpdate) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    color = Color.White,
+                                    strokeWidth = 2.dp
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Checking...", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            } else {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.SystemUpdate,
+                                        contentDescription = "Check for Updates",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(15.dp)
+                                    )
+                                    Text("Check for Updates", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+
+                        Button(
+                            onClick = {
+                                isManualSyncing = true
+                                viewModel.manualSyncAllUpdates { success, msg ->
+                                    isManualSyncing = false
+                                    Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                                }
+                            },
+                            enabled = !isManualSyncing && !isCheckingUpdate,
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.buttonColors(containerColor = BlueAccent),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            if (isManualSyncing) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    color = Color.White,
+                                    strokeWidth = 2.dp
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Syncing...", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            } else {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Refresh,
+                                        contentDescription = null,
+                                        tint = Color.White,
+                                        modifier = Modifier.size(15.dp)
+                                    )
+                                    Text("Sync Database", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
