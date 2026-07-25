@@ -42,6 +42,7 @@ fun SalesRepHomeScreen(viewModel: DexcargoViewModel) {
     val packages by viewModel.cargoPackages.collectAsState()
     val alerts by viewModel.broadcastMessages.collectAsState()
     val backendCommissions by viewModel.backendCommissions.collectAsState()
+    val updateAvailable by viewModel.hasUpdate.collectAsState()
 
     val myPackages = remember(packages, currentEmp) {
         val currentId = currentEmp?.id ?: ""
@@ -103,6 +104,7 @@ fun SalesRepHomeScreen(viewModel: DexcargoViewModel) {
                 initials = if (empInitials.isNotBlank()) empInitials else "SR",
                 profileBitmap = userPhoto,
                 notificationCount = myAlerts.size,
+                updateAvailable = updateAvailable,
                 onNotificationClick = { showNotificationsDialog = true },
                 onProfileClick = { viewModel.navigateTo(Screen.ProfileSettings) }
             )
@@ -240,6 +242,7 @@ fun LogisticsManagerHomeScreen(viewModel: DexcargoViewModel) {
     val packages by viewModel.cargoPackages.collectAsState()
     val alerts by viewModel.broadcastMessages.collectAsState()
     val backendCommissions by viewModel.backendCommissions.collectAsState()
+    val updateAvailable by viewModel.hasUpdate.collectAsState()
 
     val totalCost = remember(packages) {
         packages.size * 300 // KES 300 per sorted package
@@ -295,6 +298,7 @@ fun LogisticsManagerHomeScreen(viewModel: DexcargoViewModel) {
                 initials = if (empInitials.isNotBlank()) empInitials else "LM",
                 profileBitmap = userPhoto,
                 notificationCount = myAlerts.size,
+                updateAvailable = updateAvailable,
                 onNotificationClick = { showNotificationsDialog = true },
                 onProfileClick = { viewModel.navigateTo(Screen.ProfileSettings) }
             )
@@ -477,6 +481,7 @@ fun SalesManagerHomeScreen(viewModel: DexcargoViewModel) {
     val alerts by viewModel.broadcastMessages.collectAsState()
     val employeesList by viewModel.employees.collectAsState()
     val backendCommissions by viewModel.backendCommissions.collectAsState()
+    val updateAvailable by viewModel.hasUpdate.collectAsState()
 
     val totalPaidRevenue = remember(packages) {
         packages.filter { it.status != "registered" }.sumOf { it.cost }
@@ -530,6 +535,7 @@ fun SalesManagerHomeScreen(viewModel: DexcargoViewModel) {
                 initials = if (empInitials.isNotBlank()) empInitials else "SM",
                 profileBitmap = userPhoto,
                 notificationCount = myAlerts.size,
+                updateAvailable = updateAvailable,
                 onNotificationClick = { showNotificationsDialog = true },
                 onProfileClick = { viewModel.navigateTo(Screen.ProfileSettings) }
             )
@@ -694,6 +700,7 @@ fun AdminHomeScreen(viewModel: DexcargoViewModel) {
     val notifications by viewModel.paymentNotifications.collectAsState()
     val alerts by viewModel.broadcastMessages.collectAsState()
     val backendCommissions by viewModel.backendCommissions.collectAsState()
+    val updateAvailable by viewModel.hasUpdate.collectAsState()
 
     var showNotificationsDialog by remember { mutableStateOf(false) }
     var employeeToDelete by remember { mutableStateOf<Employee?>(null) }
@@ -772,6 +779,7 @@ fun AdminHomeScreen(viewModel: DexcargoViewModel) {
                 initials = "AD",
                 profileBitmap = userPhoto,
                 notificationCount = alerts.size,
+                updateAvailable = updateAvailable,
                 onNotificationClick = { showNotificationsDialog = true },
                 onProfileClick = { viewModel.navigateTo(Screen.ProfileSettings) }
             )
@@ -1251,6 +1259,7 @@ fun EmployeeProfileBar(
     initials: String,
     profileBitmap: android.graphics.Bitmap? = null,
     notificationCount: Int = 0,
+    updateAvailable: Boolean = false,
     onNotificationClick: () -> Unit = {},
     onProfileClick: () -> Unit
 ) {
@@ -1364,6 +1373,17 @@ fun EmployeeProfileBar(
                         color = Color.White,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.ExtraBold
+                    )
+                }
+
+                if (updateAvailable) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .size(10.dp)
+                            .clip(CircleShape)
+                            .background(Color.Red)
+                            .border(1.dp, DarkSurface, CircleShape)
                     )
                 }
             }

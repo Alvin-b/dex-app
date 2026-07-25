@@ -351,6 +351,7 @@ class DexcargoViewModel(
     }
 
     // In-app release update state
+    val hasUpdate = MutableStateFlow(false)
     val isAppUpdateDownloading = MutableStateFlow(false)
     val appUpdateProgress = MutableStateFlow(0f)
     val appUpdateStatusText = MutableStateFlow("")
@@ -1399,123 +1400,73 @@ class DexcargoViewModel(
             loadInstalledVersion(context)
         }
         viewModelScope.launch {
-            _syncStatusMessage.value = "Checking GitHub Releases & Remote Config for new app updates..."
+            _syncStatusMessage.value = "Checking DexApp Update Server..."
             delay(400)
-
-            var remoteBuildNumber = installedBuildNumber.value
-            var remoteVersionName = installedVersionName.value
-            var remoteNotes = "DEX Logistics Release: CI/CD GitHub Actions build, dynamic multi-cloud sync & performance enhancements."
-            var downloadUrl: String? = null
-            var sourceChannel = "GitHub / Remote Config"
-
-            // 1. Check GitHub Releases API (Primary GitHub OTA channel)
-            try {
-                val ghResponse = com.example.data.api.GitHubReleaseClient.api.getLatestRelease("dexprofile41", "dexcargo-ops")
-                if (ghResponse.isSuccessful && ghResponse.body() != null) {
-                    val release = ghResponse.body()!!
-                    val tag = release.tagName ?: ""
-                    val apkAsset = release.assets?.firstOrNull { it.name?.endsWith(".apk", ignoreCase = true) == true || it.browserDownloadUrl?.endsWith(".apk", ignoreCase = true) == true }
-                    
-                    if (tag.isNotBlank()) {
-                        remoteVersionName = tag
-                        val parsedBuild = tag.filter { it.isDigit() }.toIntOrNull() ?: (installedBuildNumber.value + 1)
-                        if (parsedBuild > remoteBuildNumber) {
-                            remoteBuildNumber = parsedBuild
-                        }
-                    }
-                    if (!release.body.isNullOrBlank()) {
-                        remoteNotes = release.body
-                    }
-                    if (apkAsset?.browserDownloadUrl != null) {
-                        downloadUrl = apkAsset.browserDownloadUrl
-                    }
-                    sourceChannel = "GitHub Releases API"
-                }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-
-            // 2. Check Firebase Remote Config
-            try {
-                val remoteConfig = com.google.firebase.remoteconfig.FirebaseRemoteConfig.getInstance()
-                val configSettings = com.google.firebase.remoteconfig.FirebaseRemoteConfigSettings.Builder()
-                    .setMinimumFetchIntervalInSeconds(0)
-                    .build()
-                remoteConfig.setConfigSettingsAsync(configSettings)
-
-                val defaults: Map<String, Any> = mapOf(
-                    "latest_version_code" to installedBuildNumber.value.toLong(),
-                    "latest_version_name" to installedVersionName.value,
-                    "release_notes" to "Firebase Remote Config OTA Release: enhanced database sync, OCR package detection & security patches.",
-                    "download_url" to "https://github.com/dexprofile41/dexcargo-ops/releases/latest"
-                )
-                remoteConfig.setDefaultsAsync(defaults)
-
-                val isSuccess = kotlinx.coroutines.suspendCancellableCoroutine<Boolean> { continuation ->
-                    remoteConfig.fetchAndActivate().addOnCompleteListener { task ->
-                        if (continuation.isActive) {
-                            continuation.resume(task.isSuccessful, null)
-                        }
-                    }
-                }
-
-                if (isSuccess) {
-                    val fcBuild = remoteConfig.getLong("latest_version_code").toInt()
-                    val fcName = remoteConfig.getString("latest_version_name")
-                    val fcNotes = remoteConfig.getString("release_notes")
-                    val fcUrl = remoteConfig.getString("download_url")
-
-                    if (fcBuild > remoteBuildNumber) {
-                        remoteBuildNumber = fcBuild
-                        if (fcName.isNotBlank()) remoteVersionName = fcName
-                        if (fcNotes.isNotBlank()) remoteNotes = fcNotes
-                        if (fcUrl.isNotBlank()) downloadUrl = fcUrl
-                        sourceChannel = "Firebase Remote Config"
-                    }
-                }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-
-            // 3. Fallback to Supabase app_releases API if cloud release is higher
-            try {
-                val releases = com.example.data.api.SupabaseClient.api.getLatestRelease()
-                val latest = releases.firstOrNull()
-                if (latest != null && latest.buildNumber != null && !latest.versionName.isNullOrBlank()) {
-                    if (latest.buildNumber > remoteBuildNumber) {
-                        remoteBuildNumber = latest.buildNumber
-                        remoteVersionName = latest.versionName
-                        remoteNotes = latest.releaseNotes ?: remoteNotes
-                        downloadUrl = latest.downloadUrl
-                        sourceChannel = "Supabase OTA API"
-                    }
-                }
-            } catch (ex: Exception) {
-                ex.printStackTrace()
-            }
-
-            targetUpdateBuildNumber = remoteBuildNumber
-            targetUpdateVersionName = remoteVersionName
-            targetUpdateUrl = downloadUrl
 
             val currentBuild = installedBuildNumber.value
             val currentVersion = installedVersionName.value
 
-            // Only trigger update UI if a discrepancy / newer build is detected
-            if (remoteBuildNumber > currentBuild) {
-                _syncStatusMessage.value = "$sourceChannel: New release available ($remoteVersionName, Build $remoteBuildNumber)"
-                onResult(
-                    true,
-                    "New App Release Available via $sourceChannel!\n\nTarget Version: $remoteVersionName (Build $remoteBuildNumber)\nInstalled Version: $currentVersion (Build $currentBuild)\n\nRelease Notes:\n$remoteNotes\n\nClick 'Start In-App Update' below to download and apply the OTA update directly inside the app.",
-                    downloadUrl
-                )
-            } else {
-                _syncStatusMessage.value = "App is up to date ($currentVersion)"
-                onResult(
-                    false,
-                    "Your DEX Logistics application is up to date ($currentVersion, Build $currentBuild)! $sourceChannel confirmed no pending updates.",
-                    null
-                )
+            try {
+                // 1. Check our Update Server API instead of GitHub directly
+                val url = "https://dexappdl-xghempwt.manus.space/api/apk/latest"
+                val client = okhttp3.OkHttpClient()
+                val request = okhttp3.Request.Builder()
+                    .url(url)
+                    .build()
+
+                val response = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    client.newCall(request).execute()
+                }
+
+                if (!response.isSuccessful) {
+                    onResult(false, "Failed to contact update server (${response.code})", null)
+                    return@launch
+                }
+
+                val responseBody = response.body?.string() ?: ""
+                val json = com.squareup.moshi.Moshi.Builder().addLast(com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory()).build()
+                    .adapter(Map::class.java)
+                    .fromJson(responseBody)
+
+                @Suppress("UNCHECKED_CAST")
+                val data = json as? Map<String, Any>
+
+                if (data == null) {
+                    onResult(false, "No update information available.", null)
+                    return@launch
+                }
+
+                // 2. Parse server response
+                val remoteBuild = (data["versionCode"] as? Number)?.toInt() ?: currentBuild
+                val remoteName = data["versionName"] as? String ?: currentVersion
+                val remoteNotes = data["commitMessage"] as? String ?: "New release available on DexApp Update Server."
+                val downloadUrl = data["apkUrl"] as? String
+
+                targetUpdateBuildNumber = remoteBuild
+                targetUpdateVersionName = remoteName
+                targetUpdateUrl = downloadUrl
+
+                // 3. Compare versions
+                if (remoteBuild > currentBuild) {
+                    hasUpdate.value = true
+                    _syncStatusMessage.value = "New release available: $remoteName"
+                    onResult(
+                        true,
+                        "New App Release Available!\n\nTarget Version: $remoteName (Build $remoteBuild)\nInstalled Version: $currentVersion (Build $currentBuild)\n\nRelease Notes:\n$remoteNotes\n\nClick 'Start In-App Update' below to download and install.",
+                        downloadUrl
+                    )
+                } else {
+                    hasUpdate.value = false
+                    _syncStatusMessage.value = "App is up to date ($currentVersion)"
+                    onResult(
+                        false,
+                        "Your DEX Logistics application is up to date ($currentVersion, Build $currentBuild).",
+                        null
+                    )
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                onResult(false, "Error checking for updates: ${e.message}", null)
             }
         }
     }

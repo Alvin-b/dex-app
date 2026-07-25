@@ -182,6 +182,20 @@ fun ProfileSettingsScreen(viewModel: DexcargoViewModel) {
                                 fontWeight = FontWeight.Black
                             )
                         }
+
+                        // RED DOT indicator for updates
+                        val updateAvailable by viewModel.hasUpdate.collectAsState()
+                        if (updateAvailable) {
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .offset(x = 6.dp, y = (-6).dp)
+                                    .size(16.dp)
+                                    .clip(CircleShape)
+                                    .background(Color.Red)
+                                    .border(2.dp, DarkSurface, CircleShape)
+                            )
+                        }
                     }
 
                     TextButton(onClick = { showPhotoDialog = true }) {

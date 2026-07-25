@@ -185,8 +185,15 @@ class MainActivity : FragmentActivity() {
 
         setContent {
             MyApplicationTheme {
+                val context = androidx.compose.ui.platform.LocalContext.current
                 val currentScreen by viewModel.currentScreen.collectAsState()
                 val currentEmp by viewModel.currentEmployee.collectAsState()
+
+                androidx.compose.runtime.LaunchedEffect(currentEmp) {
+                    if (currentEmp != null) {
+                        viewModel.checkForAppUpdates(context) { _, _, _ -> }
+                    }
+                }
 
                 // Register Native Back button interception
                 if (currentEmp != null) {
