@@ -11,6 +11,8 @@ import okhttp3.RequestBody
 
 class DexcargoRepository(private val database: AppDatabase) {
 
+    val adminRepository = AdminRepository(database)
+
     init {
         initFirestoreRealtimeSync()
     }
@@ -35,13 +37,6 @@ class DexcargoRepository(private val database: AppDatabase) {
                         if (email.isNotBlank()) {
                             Employee(id, name, email, password, role, isActive, pin, biometricEnabled)
                         } else null
-                    }
-                    val localEmps = database.employeeDao().getAllEmployees().firstOrNull() ?: emptyList()
-                    val validRemoteIds = firestoreEmployees.map { it.id }.toSet()
-                    for (local in localEmps) {
-                        if (!validRemoteIds.contains(local.id) && local.id != "ADM-001") {
-                            database.employeeDao().deleteEmployeeById(local.id)
-                        }
                     }
                     if (firestoreEmployees.isNotEmpty()) {
                         database.employeeDao().insertEmployees(firestoreEmployees)
@@ -132,53 +127,9 @@ class DexcargoRepository(private val database: AppDatabase) {
     suspend fun getEmployeeById(id: String): Employee? = database.employeeDao().getEmployeeById(id)
     
     suspend fun insertEmployee(employee: Employee, online: Boolean = false) {
-        database.employeeDao().insertEmployee(employee)
-        try {
-            val userMap = hashMapOf(
-                "id" to employee.id,
-                "name" to employee.name,
-                "email" to employee.email,
-                "role" to employee.role,
-                "isActive" to employee.isActive,
-                "pin" to (employee.pin ?: ""),
-                "biometricEnabled" to employee.biometricEnabled,
-                "password" to employee.password
-            )
-            com.google.firebase.firestore.FirebaseFirestore.getInstance()
-                .collection("users")
-                .document(employee.id)
-                .set(userMap)
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-        if (online) {
-            try {
-                SupabaseClient.api.createProfile(
-                    apiKey = SupabaseClient.API_KEY,
-                    authHeader = SupabaseClient.getBearerHeader(),
-                    profile = ProfileResponse(
-                        id = employee.id,
-                        name = employee.name,
-                        email = employee.email,
-                        isActive = employee.isActive,
-                        pinHash = employee.pin,
-                        biometricEnabled = employee.biometricEnabled
-                    )
-                )
-                SupabaseClient.api.createUserRole(
-                    apiKey = SupabaseClient.API_KEY,
-                    authHeader = SupabaseClient.getBearerHeader(),
-                    role = UserRoleResponse(
-                        userId = employee.id,
-                        role = employee.role
-                    )
-                )
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-        }
+        adminRepository.saveUserToFirestoreAndDatabase(employee, online)
     }
-    
+
     suspend fun updateEmployeeActiveStatus(id: String, isActive: Boolean, online: Boolean = false) {
         database.employeeDao().updateEmployeeActiveStatus(id, isActive)
         if (online) {
@@ -194,7 +145,7 @@ class DexcargoRepository(private val database: AppDatabase) {
             }
         }
     }
-    
+
     suspend fun updateEmployeePinAndBiometrics(id: String, pin: String?, biometricEnabled: Boolean, online: Boolean = false) {
         database.employeeDao().updateEmployeePinAndBiometrics(id, pin, biometricEnabled)
         if (online) {
@@ -212,37 +163,7 @@ class DexcargoRepository(private val database: AppDatabase) {
     }
 
     suspend fun deleteEmployee(id: String, online: Boolean = true) {
-        database.employeeDao().deleteEmployeeById(id)
-        try {
-            SupabaseClient.api.deleteProfile(
-                apiKey = SupabaseClient.API_KEY,
-                authHeader = SupabaseClient.getBearerHeader(),
-                idFilter = "eq.$id"
-            )
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-        try {
-            SupabaseClient.api.deleteUserRole(
-                apiKey = SupabaseClient.API_KEY,
-                authHeader = SupabaseClient.getBearerHeader(),
-                userIdFilter = "eq.$id"
-            )
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-        try {
-            val firestore = com.google.firebase.firestore.FirebaseFirestore.getInstance()
-            firestore.collection("users").document(id).delete()
-            firestore.collection("users").whereEqualTo("id", id).get()
-                .addOnSuccessListener { querySnapshot ->
-                    for (doc in querySnapshot.documents) {
-                        doc.reference.delete()
-                    }
-                }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
+        adminRepository.deleteUser(id, online)
     }
 
     suspend fun getPackageById(id: String): CargoPackage? = database.cargoPackageDao().getPackageById(id)
@@ -579,12 +500,6 @@ class DexcargoRepository(private val database: AppDatabase) {
                 )
             }
             if (employeeList.isNotEmpty()) {
-                val validSupabaseIds = employeeList.map { it.id }.toSet()
-                for (local in existingLocalEmps) {
-                    if (!validSupabaseIds.contains(local.id) && local.id != "ADM-001") {
-                        database.employeeDao().deleteEmployeeById(local.id)
-                    }
-                }
                 database.employeeDao().insertEmployees(employeeList)
             }
         } catch (e: Exception) {

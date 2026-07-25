@@ -176,9 +176,15 @@ data class CommissionRateApi(
 
 data class StkPushRequest(
     @Json(name = "phone") val phone: String,
+    @Json(name = "phone_number") val phoneNumber: String = phone,
+    @Json(name = "PhoneNumber") val darajaPhoneNumber: String = phone,
     @Json(name = "amount") val amount: Int,
+    @Json(name = "Amount") val darajaAmount: Int = amount,
     @Json(name = "tracking_number") val trackingNumber: String,
-    @Json(name = "description") val description: String? = null
+    @Json(name = "account_reference") val accountReference: String = trackingNumber,
+    @Json(name = "AccountReference") val darajaAccountReference: String = trackingNumber,
+    @Json(name = "description") val description: String? = null,
+    @Json(name = "TransactionDesc") val darajaTransactionDesc: String? = description
 )
 
 data class StkPushResponse(
@@ -194,6 +200,7 @@ data class StkPushResponse(
 interface MpesaApi {
     @POST("api/mpesa-stk-push")
     suspend fun stkPush(
+        @Header("apikey") apiKey: String = SupabaseClient.API_KEY,
         @Header("Authorization") authHeader: String,
         @Body req: StkPushRequest
     ): Response<StkPushResponse>
@@ -201,6 +208,7 @@ interface MpesaApi {
     @POST
     suspend fun stkPushDynamic(
         @Url url: String,
+        @Header("apikey") apiKey: String = SupabaseClient.API_KEY,
         @Header("Authorization") authHeader: String,
         @Body req: StkPushRequest
     ): Response<StkPushResponse>

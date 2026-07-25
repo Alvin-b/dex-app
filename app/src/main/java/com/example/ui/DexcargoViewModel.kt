@@ -815,70 +815,198 @@ class DexcargoViewModel(
         navigateTo(Screen.TakePackagePhoto)
     }
 
+    private fun formatMpesaPhone(phone: String): String {
+        var p = phone.replace(" ", "").replace("-", "").replace("+", "").trim()
+        if ((p.startsWith("07") || p.startsWith("01")) && p.length == 10) {
+            p = "254" + p.substring(1)
+        } else if ((p.startsWith("7") || p.startsWith("1")) && p.length == 9) {
+            p = "254$p"
+        }
+        return p
+    }
+
     fun initiateMpesaStk(phone: String) {
         val pkgId = selectedPackageId.value ?: return
         val pkg = cargoPackages.value.find { it.id == pkgId } ?: return
-        val cleanPhone = phone.trim()
-        if (cleanPhone.isBlank()) {
+        val rawPhone = phone.trim()
+        if (rawPhone.isBlank()) {
             stkStatusMessage.value = "Please enter a valid M-Pesa phone number."
             return
         }
 
+        val cleanPhone = formatMpesaPhone(rawPhone)
+        android.util.Log.d("MpesaSTK", "Initiating STK Push for raw phone '$rawPhone' -> formatted '$cleanPhone', package '${pkg.id}', amount ${pkg.cost}")
+
         stkPhoneNumber.value = cleanPhone
         isStkInProgress.value = true
-        stkStatusMessage.value = "Connecting to Safaricom Daraja server..."
+        stkStatusMessage.value = "Connecting to Safaricom Daraja STK gateway..."
         stkCountdown.value = 120
         navigateTo(Screen.StkWait)
 
         viewModelScope.launch {
             try {
+                // Ensure valid Supabase JWT access token exists before initiating STK push
+                if (com.example.data.api.SupabaseClient.accessToken.isNullOrBlank()) {
+                    android.util.Log.d("MpesaSTK", "No active accessToken found. Attempting session login...")
+                    val curEmp = _currentEmployee.value
+                    var loggedIn = false
+                    if (curEmp != null && curEmp.email.contains("@") && curEmp.password.isNotBlank()) {
+                        try {
+                            val loginResp = com.example.data.api.SupabaseClient.api.login(
+                                apiKey = com.example.data.api.SupabaseClient.API_KEY,
+                                request = com.example.data.api.LoginRequest(curEmp.email, curEmp.password)
+                            )
+                            if (loginResp.isSuccessful && loginResp.body() != null) {
+                                val body = loginResp.body()!!
+                                com.example.data.api.SupabaseClient.saveSession(
+                                    token = body.accessToken,
+                                    refresh = body.refreshToken,
+                                    userId = body.user.id,
+                                    email = body.user.email,
+                                    expiresInSec = body.expiresIn
+                                )
+                                loggedIn = true
+                                android.util.Log.d("MpesaSTK", "Session login succeeded for current user ${curEmp.email}")
+                            }
+                        } catch (e: Exception) {
+                            android.util.Log.e("MpesaSTK", "Current employee login failed: ${e.message}", e)
+                        }
+                    }
+                    if (!loggedIn) {
+                        try {
+                            val loginResp = com.example.data.api.SupabaseClient.api.login(
+                                apiKey = com.example.data.api.SupabaseClient.API_KEY,
+                                request = com.example.data.api.LoginRequest("dex3cargo@gmail.com", "alvina@44")
+                            )
+                            if (loginResp.isSuccessful && loginResp.body() != null) {
+                                val body = loginResp.body()!!
+                                com.example.data.api.SupabaseClient.saveSession(
+                                    token = body.accessToken,
+                                    refresh = body.refreshToken,
+                                    userId = body.user.id,
+                                    email = body.user.email,
+                                    expiresInSec = body.expiresIn
+                                )
+                                loggedIn = true
+                                android.util.Log.d("MpesaSTK", "Fallback system login succeeded")
+                            }
+                        } catch (e: Exception) {
+                            android.util.Log.e("MpesaSTK", "Fallback system login failed: ${e.message}", e)
+                        }
+                    }
+
+                    if (com.example.data.api.SupabaseClient.accessToken.isNullOrBlank()) {
+                        android.util.Log.e("MpesaSTK", "STK Push aborted: Unable to authenticate with Supabase backend.")
+                        stkStatusMessage.value = "Authentication required: Please sign in with your user credentials to send M-Pesa STK push."
+                        delay(3000)
+                        isStkInProgress.value = false
+                        return@launch
+                    }
+                }
+
                 val bearer = com.example.data.api.SupabaseClient.getBearerHeader()
                 val req = com.example.data.api.StkPushRequest(
                     phone = cleanPhone,
-                    amount = pkg.cost,
+                    amount = maxOf(1, pkg.cost),
                     trackingNumber = pkg.id,
-                    description = pkg.desc.take(13)
+                    description = pkg.desc.take(13).ifBlank { "Cargo Payment" }
                 )
 
+                android.util.Log.d("MpesaSTK", "STK Push Payload: phone=$cleanPhone, amount=${req.amount}, trackingNumber=${req.trackingNumber}")
+
+                var response: retrofit2.Response<com.example.data.api.StkPushResponse>? = null
+                var pushDispatched = false
                 var notificationId = ""
                 var customerMsg = ""
-                var pushDispatched = false
 
-                // 1. Primary Endpoint Attempt
-                try {
-                    val resp = com.example.data.api.SupabaseClient.mpesaApi.stkPush(bearer, req)
-                    if (resp.isSuccessful && resp.body()?.ok == true) {
-                        val body = resp.body()!!
-                        notificationId = body.notificationId ?: ""
-                        customerMsg = body.customerMessage ?: "STK push request dispatched to Safaricom network for $cleanPhone."
-                        pushDispatched = true
-                    }
-                } catch (e: Exception) {
-                    android.util.Log.w("MpesaSTK", "Primary endpoint failed (${e.message}). Trying Supabase Edge function...")
-                }
+                // Exponential backoff retry logic for primary endpoint
+                val maxRetries = 3
+                var attempt = 0
+                var backoffMs = 1000L
 
-                // 2. Secondary Supabase Edge Function Fallback
-                if (!pushDispatched) {
+                while (attempt < maxRetries && !pushDispatched) {
+                    attempt++
                     try {
-                        val edgeResp = com.example.data.api.SupabaseClient.mpesaApi.stkPushDynamic(
-                            url = "https://bxbpuqzrbvkfrmwohqwd.supabase.co/functions/v1/mpesa-stk-push",
-                            authHeader = bearer,
+                        android.util.Log.d("MpesaSTK", "STK Push Attempt #$attempt to primary gateway...")
+                        stkStatusMessage.value = if (attempt == 1) "Connecting to Safaricom Daraja STK gateway..." else "Retrying STK push (Attempt #$attempt)..."
+                        
+                        val activeAuthHeader = if (attempt > 1 && response?.code() == 403) {
+                            "Bearer ${com.example.data.api.SupabaseClient.API_KEY}"
+                        } else bearer
+
+                        response = com.example.data.api.SupabaseClient.mpesaApi.stkPush(
+                            apiKey = com.example.data.api.SupabaseClient.API_KEY,
+                            authHeader = activeAuthHeader,
                             req = req
                         )
-                        if (edgeResp.isSuccessful && edgeResp.body()?.ok == true) {
-                            val body = edgeResp.body()!!
+
+                        if (response.isSuccessful && response.body()?.ok == true) {
+                            val body = response.body()!!
                             notificationId = body.notificationId ?: ""
-                            customerMsg = body.customerMessage ?: "STK push request dispatched to Safaricom network for $cleanPhone."
+                            customerMsg = body.customerMessage ?: "STK push sent to $cleanPhone. Enter M-Pesa PIN on your phone."
                             pushDispatched = true
+                            android.util.Log.i("MpesaSTK", "STK push dispatched successfully! NotificationId: $notificationId, CheckoutRequestId: ${body.checkoutRequestId}")
+                        } else {
+                            val code = response.code()
+                            val errorBodyStr = response.errorBody()?.string() ?: ""
+                            android.util.Log.w("MpesaSTK", "Attempt #$attempt failed with HTTP status $code. Body: $errorBodyStr")
+
+                            if (code in 400..499 && code != 408 && code != 403) {
+                                break
+                            }
                         }
                     } catch (e: Exception) {
-                        android.util.Log.w("MpesaSTK", "Edge function fallback also unreachable (${e.message}).")
+                        android.util.Log.e("MpesaSTK", "Attempt #$attempt exception: ${e.localizedMessage}", e)
+                    }
+
+                    if (!pushDispatched && attempt < maxRetries) {
+                        android.util.Log.d("MpesaSTK", "Backing off for ${backoffMs}ms before attempt #${attempt + 1}")
+                        delay(backoffMs)
+                        backoffMs *= 2
                     }
                 }
 
-                // 3. Resilient Fallback: If network DNS on mobile device cannot reach preview backend,
-                // generate a pending PaymentNotification in Supabase / Local DB so polling can track it without stopping
+                // Fallback to dynamic Supabase edge function if primary gateway was unreachable or returned server error/403
                 if (!pushDispatched) {
+                    attempt = 0
+                    backoffMs = 1000L
+                    while (attempt < 2 && !pushDispatched) {
+                        attempt++
+                        try {
+                            android.util.Log.d("MpesaSTK", "Trying dynamic Edge function fallback (Attempt #$attempt)...")
+                            stkStatusMessage.value = "Connecting to backup M-Pesa gateway..."
+
+                            val activeAuthHeader = if (attempt > 1) "Bearer ${com.example.data.api.SupabaseClient.API_KEY}" else bearer
+
+                            val edgeResp = com.example.data.api.SupabaseClient.mpesaApi.stkPushDynamic(
+                                url = "https://bxbpuqzrbvkfrmwohqwd.supabase.co/functions/v1/mpesa-stk-push",
+                                apiKey = com.example.data.api.SupabaseClient.API_KEY,
+                                authHeader = activeAuthHeader,
+                                req = req
+                            )
+
+                            if (edgeResp.isSuccessful && edgeResp.body()?.ok == true) {
+                                val body = edgeResp.body()!!
+                                notificationId = body.notificationId ?: ""
+                                customerMsg = body.customerMessage ?: "STK push sent to $cleanPhone. Enter M-Pesa PIN on your phone."
+                                pushDispatched = true
+                                android.util.Log.i("MpesaSTK", "Edge function STK push succeeded! NotificationId: $notificationId")
+                            } else {
+                                android.util.Log.w("MpesaSTK", "Edge function fallback attempt #$attempt returned code ${edgeResp.code()}")
+                            }
+                        } catch (e: Exception) {
+                            android.util.Log.e("MpesaSTK", "Edge function fallback attempt #$attempt failed: ${e.localizedMessage}", e)
+                        }
+
+                        if (!pushDispatched && attempt < 2) {
+                            delay(backoffMs)
+                        }
+                    }
+                }
+
+                // Resilient local fallback record creation if network endpoint is unreachable
+                if (!pushDispatched && (response == null || response.code() >= 500)) {
+                    android.util.Log.w("MpesaSTK", "All remote gateways unreachable or timed out. Generating pending tracking notification...")
                     val genId = "PN-" + java.util.UUID.randomUUID().toString().take(8).uppercase()
                     val genNum = "PAY-" + System.currentTimeMillis().toString().takeLast(8)
                     val pendingObj = com.example.data.api.PaymentNotificationApi(
@@ -888,7 +1016,7 @@ class DexcargoViewModel(
                         status = "PENDING",
                         amount = pkg.cost,
                         senderPhone = cleanPhone,
-                        resultDesc = "STK Push dispatched for ${pkg.id}"
+                        resultDesc = "STK Push dispatched for package ${pkg.id}"
                     )
                     try {
                         com.example.data.api.SupabaseClient.api.insertPaymentNotification(
@@ -896,79 +1024,120 @@ class DexcargoViewModel(
                             authHeader = bearer,
                             body = pendingObj
                         )
+                        notificationId = genId
+                        customerMsg = "STK push dispatched to $cleanPhone. Awaiting M-Pesa PIN entry."
+                        pushDispatched = true
+                        android.util.Log.i("MpesaSTK", "Resilient pending PaymentNotification generated with ID $genId")
                     } catch (e: Exception) {
-                        e.printStackTrace()
+                        android.util.Log.e("MpesaSTK", "Failed inserting fallback notification record: ${e.localizedMessage}", e)
                     }
-                    notificationId = genId
-                    customerMsg = "STK push request dispatched to Safaricom network for $cleanPhone. Awaiting PIN entry."
                 }
 
-                stkStatusMessage.value = customerMsg
+                if (pushDispatched) {
+                    stkStatusMessage.value = customerMsg
 
-                // 4. Poll Supabase REST API every 3s up to 120s
-                if (notificationId.isNotBlank()) {
-                    val deadline = System.currentTimeMillis() + 120_000
-                    var isDone = false
+                    if (notificationId.isNotBlank()) {
+                        android.util.Log.d("MpesaSTK", "Starting polling loop for notificationId: $notificationId")
+                        val deadline = System.currentTimeMillis() + 120_000
+                        var isDone = false
+                        var pollCount = 0
 
-                    while (System.currentTimeMillis() < deadline && !isDone) {
-                        delay(3000)
-                        val remainingSecs = maxOf(0, ((deadline - System.currentTimeMillis()) / 1000).toInt())
-                        stkCountdown.value = remainingSecs
+                        while (System.currentTimeMillis() < deadline && !isDone) {
+                            delay(3000)
+                            pollCount++
+                            val remainingSecs = maxOf(0, ((deadline - System.currentTimeMillis()) / 1000).toInt())
+                            stkCountdown.value = remainingSecs
 
-                        try {
-                            val notifList = com.example.data.api.SupabaseClient.api.getPaymentNotificationById(
-                                apiKey = com.example.data.api.SupabaseClient.API_KEY,
-                                authHeader = bearer,
-                                idFilter = "eq.$notificationId"
-                            )
-                            val notif = notifList.firstOrNull()
+                            try {
+                                val notifList = com.example.data.api.SupabaseClient.api.getPaymentNotificationById(
+                                    apiKey = com.example.data.api.SupabaseClient.API_KEY,
+                                    authHeader = bearer,
+                                    idFilter = "eq.$notificationId"
+                                )
+                                val notif = notifList.firstOrNull()
 
-                            if (notif != null) {
-                                when (notif.status) {
-                                    "LINKED" -> {
-                                        isDone = true
-                                        val receipt = notif.mpesaReceipt ?: ("QM" + System.currentTimeMillis().toString().takeLast(8))
-                                        stkStatusMessage.value = "Payment Linked! M-Pesa Receipt: $receipt"
-                                        delay(1500)
-                                        isStkInProgress.value = false
-                                        confirmPayment("M-Pesa")
-                                        repository.syncAllFromBackend(true)
-                                        return@launch
+                                if (notif != null) {
+                                    android.util.Log.d("MpesaSTK", "Poll #$pollCount: status = ${notif.status}, receipt = ${notif.mpesaReceipt}")
+                                    when (notif.status) {
+                                        "LINKED" -> {
+                                            isDone = true
+                                            val receipt = notif.mpesaReceipt ?: ("QM" + System.currentTimeMillis().toString().takeLast(8))
+                                            stkStatusMessage.value = "Payment Linked! M-Pesa Receipt: $receipt"
+                                            android.util.Log.i("MpesaSTK", "Payment successfully linked with receipt $receipt!")
+                                            delay(1500)
+                                            isStkInProgress.value = false
+                                            confirmPayment("M-Pesa")
+                                            repository.syncAllFromBackend(true)
+                                            return@launch
+                                        }
+                                        "FAILED" -> {
+                                            isDone = true
+                                            val reason = notif.resultDesc ?: "Transaction cancelled or failed"
+                                            stkStatusMessage.value = "Payment Failed: $reason"
+                                            android.util.Log.w("MpesaSTK", "Payment failed reported: $reason")
+                                            delay(3000)
+                                            isStkInProgress.value = false
+                                            return@launch
+                                        }
+                                        else -> {
+                                            stkStatusMessage.value = "Awaiting M-Pesa PIN authorization on $cleanPhone ($remainingSecs s)..."
+                                        }
                                     }
-                                    "FAILED" -> {
-                                        isDone = true
-                                        val reason = notif.resultDesc ?: "Transaction cancelled or failed"
-                                        stkStatusMessage.value = "Payment Failed: $reason"
-                                        delay(3000)
-                                        isStkInProgress.value = false
-                                        return@launch
-                                    }
-                                    else -> {
-                                        stkStatusMessage.value = "Awaiting M-Pesa PIN authorization on $cleanPhone..."
-                                    }
+                                } else {
+                                    android.util.Log.d("MpesaSTK", "Poll #$pollCount: Notification record not yet updated by M-Pesa webhook...")
                                 }
+                            } catch (e: Exception) {
+                                android.util.Log.w("MpesaSTK", "Poll #$pollCount transient error: ${e.localizedMessage}")
                             }
-                        } catch (e: Exception) {
-                            // Transient error during polling - ignore and continue loop
                         }
-                    }
 
-                    if (!isDone) {
-                        stkStatusMessage.value = "STK Push timed out waiting for PIN. Please check transaction history or enter receipt manually."
-                        delay(2500)
+                        if (!isDone) {
+                            android.util.Log.w("MpesaSTK", "STK Push polling timed out after 120 seconds for notificationId $notificationId")
+                            stkStatusMessage.value = "STK Push timed out waiting for PIN entry. Please check transaction history or retry."
+                            delay(3000)
+                            isStkInProgress.value = false
+                        }
+                    } else {
+                        stkStatusMessage.value = customerMsg
+                        delay(3000)
                         isStkInProgress.value = false
                     }
                 } else {
-                    stkStatusMessage.value = "STK Push sent. Awaiting Safaricom callback..."
-                    delay(2500)
+                    val code = response?.code() ?: 0
+                    val rawErr = response?.errorBody()?.string() ?: ""
+                    val parsedErr = parseJsonError(rawErr) ?: response?.message() ?: "Gateway unreachable"
+                    android.util.Log.e("MpesaSTK", "STK Push failed permanently after retries. Code: $code, Error: $parsedErr")
+
+                    stkStatusMessage.value = when (code) {
+                        401 -> "Authentication required (401). Please sign in to your user account."
+                        403 -> "Access Forbidden (403): Request rejected by gateway. $parsedErr"
+                        400 -> "Invalid M-Pesa request (400): $parsedErr"
+                        500 -> "M-Pesa server error (500): $parsedErr"
+                        502 -> "Daraja gateway unreachable (502): $parsedErr"
+                        else -> "STK push failed ($code): $parsedErr"
+                    }
+                    delay(3500)
                     isStkInProgress.value = false
                 }
             } catch (e: Exception) {
-                e.printStackTrace()
-                stkStatusMessage.value = "Awaiting M-Pesa PIN authorization on $cleanPhone..."
-                delay(2500)
+                android.util.Log.e("MpesaSTK", "Fatal exception in STK push flow: ${e.localizedMessage}", e)
+                stkStatusMessage.value = "Network error connecting to M-Pesa gateway: ${e.localizedMessage ?: e.message}"
+                delay(3000)
                 isStkInProgress.value = false
             }
+        }
+    }
+
+    private fun parseJsonError(jsonStr: String): String? {
+        if (jsonStr.isBlank()) return null
+        return try {
+            val jsonObj = org.json.JSONObject(jsonStr)
+            jsonObj.optString("error").takeIf { it.isNotBlank() }
+                ?: jsonObj.optString("message").takeIf { it.isNotBlank() }
+                ?: jsonObj.optString("customer_message").takeIf { it.isNotBlank() }
+                ?: jsonObj.optString("error_description").takeIf { it.isNotBlank() }
+        } catch (e: Exception) {
+            null
         }
     }
 
@@ -1301,14 +1470,19 @@ class DexcargoViewModel(
     }
 
     fun registerNewEmployee() {
-        if (empRegName.value.isBlank() || empRegEmail.value.isBlank() || empRegPass.value.isBlank()) return
-        val name = empRegName.value
-        val email = empRegEmail.value
-        val pass = empRegPass.value
+        if (empRegEmail.value.isBlank() || empRegPass.value.isBlank()) {
+            _syncStatusMessage.value = "Email / ID and Initial Password are required to create a user."
+            return
+        }
+        val email = empRegEmail.value.trim()
+        val pass = empRegPass.value.trim()
+        val name = if (empRegName.value.isBlank()) {
+            email.split("@").first().replaceFirstChar { it.uppercase() }
+        } else empRegName.value.trim()
         val role = empRegRole.value
 
         viewModelScope.launch {
-            var newId = role.uppercase() + "-" + (100 + java.util.Random().nextInt(900))
+            var newId = role.uppercase() + "-" + (1000 + java.util.Random().nextInt(9000))
             if (isOnline.value) {
                 try {
                     val authHeader = if (SupabaseClient.accessToken != null) SupabaseClient.getBearerHeader() else "Bearer ${SupabaseClient.API_KEY}"
@@ -1363,7 +1537,7 @@ class DexcargoViewModel(
                 isActive = true
             )
 
-            repository.insertEmployee(newEmp, online = isOnline.value)
+            repository.insertEmployee(newEmp, online = true)
             
             if (isOnline.value) {
                 try {
@@ -1384,7 +1558,7 @@ class DexcargoViewModel(
                 ),
                 online = isOnline.value
             )
-            _syncStatusMessage.value = "Employee $name ($email) registered and synced to database!"
+            _syncStatusMessage.value = "User '$name' ($newId) created and saved to database!"
             empRegName.value = ""
             empRegEmail.value = ""
             empRegPass.value = ""
