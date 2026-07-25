@@ -415,6 +415,22 @@ class DexcargoViewModel(
                 }
             }
         }
+
+        // Real-time listener for user account deletion or deactivation across sessions/devices
+        viewModelScope.launch {
+            employees.collect { empList ->
+                val current = _currentEmployee.value
+                if (current != null) {
+                    val matchingEmp = empList.find { it.id == current.id }
+                    if (matchingEmp == null || !matchingEmp.isActive) {
+                        logout()
+                        _syncStatusMessage.value = "Session terminated: Your account was deleted or deactivated by Administrator."
+                    } else if (matchingEmp != current) {
+                        _currentEmployee.value = matchingEmp
+                    }
+                }
+            }
+        }
     }
 
     // --- CORE OPERATIONS ---
@@ -1599,7 +1615,7 @@ class DexcargoViewModel(
             val match = list.find { it.id == empId }
             val empName = match?.name ?: empId
 
-            repository.deleteEmployee(empId, online = isOnline.value)
+            repository.deleteEmployee(empId, online = true)
 
             repository.insertLog(
                 AuditLog(
@@ -1611,6 +1627,13 @@ class DexcargoViewModel(
                 ),
                 online = isOnline.value
             )
+
+            if (_currentEmployee.value?.id == empId) {
+                logout()
+            }
+            if (quickAccessEmployee.value?.id == empId) {
+                quickAccessEmployee.value = null
+            }
 
             onComplete?.invoke(true, "User account '$empName' ($empId) has been permanently deleted from database.")
         }

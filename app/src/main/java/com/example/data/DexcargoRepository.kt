@@ -36,6 +36,13 @@ class DexcargoRepository(private val database: AppDatabase) {
                             Employee(id, name, email, password, role, isActive, pin, biometricEnabled)
                         } else null
                     }
+                    val localEmps = database.employeeDao().getAllEmployees().firstOrNull() ?: emptyList()
+                    val validRemoteIds = firestoreEmployees.map { it.id }.toSet()
+                    for (local in localEmps) {
+                        if (!validRemoteIds.contains(local.id) && local.id != "ADM-001") {
+                            database.employeeDao().deleteEmployeeById(local.id)
+                        }
+                    }
                     if (firestoreEmployees.isNotEmpty()) {
                         database.employeeDao().insertEmployees(firestoreEmployees)
                     }
@@ -204,39 +211,37 @@ class DexcargoRepository(private val database: AppDatabase) {
         }
     }
 
-    suspend fun deleteEmployee(id: String, online: Boolean = false) {
+    suspend fun deleteEmployee(id: String, online: Boolean = true) {
         database.employeeDao().deleteEmployeeById(id)
-        if (online) {
-            try {
-                SupabaseClient.api.deleteProfile(
-                    apiKey = SupabaseClient.API_KEY,
-                    authHeader = SupabaseClient.getBearerHeader(),
-                    idFilter = "eq.$id"
-                )
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-            try {
-                SupabaseClient.api.deleteUserRole(
-                    apiKey = SupabaseClient.API_KEY,
-                    authHeader = SupabaseClient.getBearerHeader(),
-                    userIdFilter = "eq.$id"
-                )
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-            try {
-                val firestore = com.google.firebase.firestore.FirebaseFirestore.getInstance()
-                firestore.collection("users").document(id).delete()
-                firestore.collection("users").whereEqualTo("id", id).get()
-                    .addOnSuccessListener { querySnapshot ->
-                        for (doc in querySnapshot.documents) {
-                            doc.reference.delete()
-                        }
+        try {
+            SupabaseClient.api.deleteProfile(
+                apiKey = SupabaseClient.API_KEY,
+                authHeader = SupabaseClient.getBearerHeader(),
+                idFilter = "eq.$id"
+            )
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        try {
+            SupabaseClient.api.deleteUserRole(
+                apiKey = SupabaseClient.API_KEY,
+                authHeader = SupabaseClient.getBearerHeader(),
+                userIdFilter = "eq.$id"
+            )
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        try {
+            val firestore = com.google.firebase.firestore.FirebaseFirestore.getInstance()
+            firestore.collection("users").document(id).delete()
+            firestore.collection("users").whereEqualTo("id", id).get()
+                .addOnSuccessListener { querySnapshot ->
+                    for (doc in querySnapshot.documents) {
+                        doc.reference.delete()
                     }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
+                }
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
     }
 
@@ -574,6 +579,12 @@ class DexcargoRepository(private val database: AppDatabase) {
                 )
             }
             if (employeeList.isNotEmpty()) {
+                val validSupabaseIds = employeeList.map { it.id }.toSet()
+                for (local in existingLocalEmps) {
+                    if (!validSupabaseIds.contains(local.id) && local.id != "ADM-001") {
+                        database.employeeDao().deleteEmployeeById(local.id)
+                    }
+                }
                 database.employeeDao().insertEmployees(employeeList)
             }
         } catch (e: Exception) {
