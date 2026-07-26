@@ -1062,7 +1062,7 @@ fun AdminHomeScreen(viewModel: DexcargoViewModel) {
                                     )
                                 }
 
-                                if (emp.id != "ADM-001" && emp.id != currentEmp?.id) {
+                                if (emp.id != "ADM-001" && emp.id != "ADM-0001" && emp.id != currentEmp?.id) {
                                     Button(
                                         onClick = { viewModel.toggleEmployeeActiveState(emp.id) },
                                         colors = ButtonDefaults.buttonColors(

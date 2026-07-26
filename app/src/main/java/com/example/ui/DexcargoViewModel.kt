@@ -934,7 +934,7 @@ class DexcargoViewModel(
                             "Bearer ${com.example.data.api.SupabaseClient.API_KEY}"
                         } else bearer
 
-                        response = com.example.data.api.SupabaseClient.mpesaApi.stkPush(
+                        response = com.example.data.api.SupabaseClient.api.stkPush(
                             apiKey = com.example.data.api.SupabaseClient.API_KEY,
                             authHeader = activeAuthHeader,
                             req = req
@@ -966,43 +966,6 @@ class DexcargoViewModel(
                     }
                 }
 
-                // Fallback to dynamic Supabase edge function if primary gateway was unreachable or returned server error/403
-                if (!pushDispatched) {
-                    attempt = 0
-                    backoffMs = 1000L
-                    while (attempt < 2 && !pushDispatched) {
-                        attempt++
-                        try {
-                            android.util.Log.d("MpesaSTK", "Trying dynamic Edge function fallback (Attempt #$attempt)...")
-                            stkStatusMessage.value = "Connecting to backup M-Pesa gateway..."
-
-                            val activeAuthHeader = if (attempt > 1) "Bearer ${com.example.data.api.SupabaseClient.API_KEY}" else bearer
-
-                            val edgeResp = com.example.data.api.SupabaseClient.mpesaApi.stkPushDynamic(
-                                url = "https://bxbpuqzrbvkfrmwohqwd.supabase.co/functions/v1/mpesa-stk-push",
-                                apiKey = com.example.data.api.SupabaseClient.API_KEY,
-                                authHeader = activeAuthHeader,
-                                req = req
-                            )
-
-                            if (edgeResp.isSuccessful && edgeResp.body()?.ok == true) {
-                                val body = edgeResp.body()!!
-                                notificationId = body.notificationId ?: ""
-                                customerMsg = body.customerMessage ?: "STK push sent to $cleanPhone. Enter M-Pesa PIN on your phone."
-                                pushDispatched = true
-                                android.util.Log.i("MpesaSTK", "Edge function STK push succeeded! NotificationId: $notificationId")
-                            } else {
-                                android.util.Log.w("MpesaSTK", "Edge function fallback attempt #$attempt returned code ${edgeResp.code()}")
-                            }
-                        } catch (e: Exception) {
-                            android.util.Log.e("MpesaSTK", "Edge function fallback attempt #$attempt failed: ${e.localizedMessage}", e)
-                        }
-
-                        if (!pushDispatched && attempt < 2) {
-                            delay(backoffMs)
-                        }
-                    }
-                }
 
                 // Resilient local fallback record creation if network endpoint is unreachable
                 if (!pushDispatched && (response == null || response.code() >= 500)) {
@@ -1471,7 +1434,7 @@ class DexcargoViewModel(
 
     fun registerNewEmployee() {
         if (empRegEmail.value.isBlank() || empRegPass.value.isBlank()) {
-            _syncStatusMessage.value = "Email / ID and Initial Password are required to create a user."
+            _syncStatusMessage.value = "Email and Initial Password are required to create a user."
             return
         }
         val email = empRegEmail.value.trim()
@@ -1479,72 +1442,44 @@ class DexcargoViewModel(
         val name = if (empRegName.value.isBlank()) {
             email.split("@").first().replaceFirstChar { it.uppercase() }
         } else empRegName.value.trim()
-        val role = empRegRole.value
+        val inputRole = empRegRole.value
+        val canonicalRole = when (inputRole.lowercase()) {
+            "admin" -> "admin"
+            "sm", "sales_manager" -> "sales_manager"
+            "lm", "logistics_manager" -> "logistics_manager"
+            else -> "sales_rep"
+        }
 
         viewModelScope.launch {
-            var newId = role.uppercase() + "-" + (1000 + java.util.Random().nextInt(9000))
             if (isOnline.value) {
                 try {
-                    val authHeader = if (SupabaseClient.accessToken != null) SupabaseClient.getBearerHeader() else "Bearer ${SupabaseClient.API_KEY}"
-                    val signUpResponse = SupabaseClient.api.signup(
+                    val authHeader = SupabaseClient.getBearerHeader()
+                    val resp = SupabaseClient.api.createEmployeeAdmin(
                         apiKey = SupabaseClient.API_KEY,
                         authHeader = authHeader,
-                        request = SignupRequest(
+                        body = CreateEmployeeAdminRequest(
+                            fullName = name,
                             email = email,
                             password = pass,
-                            data = mapOf("name" to name)
+                            role = canonicalRole
                         )
                     )
-                    if (signUpResponse.isSuccessful && signUpResponse.body() != null) {
-                        val body = signUpResponse.body()!!
-                        val userId = body.id ?: body.user?.id
-                        if (userId != null) {
-                            newId = userId
-                            try {
-                                SupabaseClient.api.createProfile(
-                                    apiKey = SupabaseClient.API_KEY,
-                                    authHeader = SupabaseClient.getBearerHeader(),
-                                    profile = ProfileResponse(
-                                        id = userId,
-                                        name = name,
-                                        email = email,
-                                        isActive = true,
-                                        pinHash = null,
-                                        biometricEnabled = false
-                                    )
-                                )
-                                SupabaseClient.api.createUserRole(
-                                    apiKey = SupabaseClient.API_KEY,
-                                    authHeader = SupabaseClient.getBearerHeader(),
-                                    role = UserRoleResponse(userId, role)
-                                )
-                            } catch (e: Exception) {
-                                e.printStackTrace()
-                            }
+                    if (resp.isSuccessful) {
+                        _syncStatusMessage.value = "User '$name' created successfully on server!"
+                        try {
+                            repository.syncAllFromBackend(true)
+                        } catch (e: Exception) {
+                            e.printStackTrace()
                         }
+                    } else {
+                        _syncStatusMessage.value = "Failed to create user on server (HTTP ${resp.code()})"
                     }
                 } catch (e: Exception) {
                     e.printStackTrace()
+                    _syncStatusMessage.value = "Error creating user: ${e.localizedMessage}"
                 }
-            }
-
-            val newEmp = Employee(
-                id = newId,
-                name = name,
-                email = email,
-                password = pass,
-                role = role,
-                isActive = true
-            )
-
-            repository.insertEmployee(newEmp, online = true)
-            
-            if (isOnline.value) {
-                try {
-                    repository.syncAllFromBackend(true)
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                }
+            } else {
+                _syncStatusMessage.value = "Creating staff requires an online connection."
             }
 
             val actor = currentEmployee.value?.id ?: "ADM-001"
@@ -1554,11 +1489,10 @@ class DexcargoViewModel(
                     action = "REGISTER_EMPLOYEE",
                     actor = "$actor (${currentEmployee.value?.name ?: "Admin"})",
                     timestamp = getNowTimestamp(),
-                    details = "Registered new employee $name ($newId) as ${role.uppercase()}"
+                    details = "Registered new employee $name ($email) as ${canonicalRole.uppercase()}"
                 ),
                 online = isOnline.value
             )
-            _syncStatusMessage.value = "User '$name' ($newId) created and saved to database!"
             empRegName.value = ""
             empRegEmail.value = ""
             empRegPass.value = ""
@@ -1566,12 +1500,35 @@ class DexcargoViewModel(
     }
 
     fun toggleEmployeeActiveState(empId: String) {
-        if (empId == "ADM-001") return // Safety lock
+        if (empId == "ADM-001" || empId == "ADM-0001" || empId == currentEmployee.value?.id) {
+            _syncStatusMessage.value = "Administrators cannot deactivate themselves or primary administrator."
+            return
+        }
         viewModelScope.launch {
             val list = repository.employees.first()
             val match = list.find { it.id == empId } ?: return@launch
             val newStatus = !match.isActive
-            repository.updateEmployeeActiveStatus(empId, newStatus, online = isOnline.value)
+            if (isOnline.value) {
+                try {
+                    val resp = SupabaseClient.api.updateEmployeeStatusAdmin(
+                        apiKey = SupabaseClient.API_KEY,
+                        authHeader = SupabaseClient.getBearerHeader(),
+                        body = UpdateEmployeeStatusAdminRequest(employeeId = empId, isActive = newStatus)
+                    )
+                    if (resp.isSuccessful) {
+                        repository.updateEmployeeActiveStatus(empId, newStatus, online = false)
+                        _syncStatusMessage.value = "Updated status for ${match.name} to ${if (newStatus) "Active" else "Inactive"}"
+                    } else {
+                        _syncStatusMessage.value = "Failed to update employee status on server (HTTP ${resp.code()})"
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    _syncStatusMessage.value = "Error updating employee status: ${e.localizedMessage}"
+                }
+            } else {
+                repository.updateEmployeeActiveStatus(empId, newStatus, online = false)
+            }
+
             repository.insertLog(
                 AuditLog(
                     id = "AL-" + System.currentTimeMillis(),
@@ -1780,7 +1737,7 @@ class DexcargoViewModel(
     }
 
     fun deleteUserAccount(empId: String, onComplete: ((Boolean, String) -> Unit)? = null) {
-        if (empId == "ADM-001" || empId == _currentEmployee.value?.id) {
+        if (empId == "ADM-001" || empId == "ADM-0001" || empId == _currentEmployee.value?.id) {
             onComplete?.invoke(false, "Cannot delete primary administrator or your own account.")
             return
         }

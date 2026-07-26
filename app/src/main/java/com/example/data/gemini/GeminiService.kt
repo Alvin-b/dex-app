@@ -434,6 +434,210 @@ object GeminiOcrHelper {
         return CargoStickerSanitizer.sanitizeAndMap(rawExtracted)
     }
 
+    /**
+     * Extracts shipping label details from a camera bitmap.
+     * Calls backend POST /api/public/gemini-ocr using the staff access token,
+     * falling back to on-device ML Kit Text Recognition if offline or on network error.
+     */
+    suspend fun extractStickerData(bitmap: Bitmap, labelId: Int, isCustomPhoto: Boolean = false): ExtractedStickerData = withContext(Dispatchers.IO) {
+        val b64Image = bitmap.toBase64()
+        val authHeader = com.example.data.api.SupabaseClient.getBearerHeader()
+
+        try {
+            val response = com.example.data.api.SupabaseClient.api.ocrGemini(
+                authHeader = authHeader,
+                apiKey = com.example.data.api.SupabaseClient.API_KEY,
+                body = mapOf(
+                    "image_base64" to b64Image,
+                    "image" to b64Image,
+                    "label_id" to labelId.toString()
+                )
+            )
+
+            if (response.isSuccessful && response.body() != null) {
+                val resMap = response.body()!!
+                val rawExtracted = ExtractedStickerData(
+                    trackingNumber = (resMap["tracking_number"] ?: resMap["trackingNumber"] ?: "").toString(),
+                    consigneeName = (resMap["consignee_name"] ?: resMap["consigneeName"] ?: resMap["consignee"] ?: "").toString(),
+                    consigneePhone = (resMap["consignee_phone"] ?: resMap["consigneePhone"] ?: resMap["phone"] ?: "").toString(),
+                    origin = (resMap["origin"] ?: "").toString(),
+                    destination = (resMap["destination"] ?: resMap["dest"] ?: "").toString(),
+                    description = (resMap["description"] ?: resMap["desc"] ?: "").toString(),
+                    mode = (resMap["mode"] ?: "").toString(),
+                    weight = (resMap["weight_kg"] ?: resMap["weight"] ?: "").toString(),
+                    pieces = (resMap["pcs"] ?: resMap["pieces"] ?: "").toString(),
+                    cost = (resMap["amount_due"] ?: resMap["cost"] ?: "").toString()
+                )
+
+                val extracted = CargoStickerSanitizer.sanitizeAndMap(rawExtracted)
+
+                if (extracted.trackingNumber.isNotBlank() || extracted.consigneePhone.isNotBlank() || extracted.consigneeName.isNotBlank()) {
+                    Log.i(TAG, "Backend Gemini OCR successfully extracted sticker data: $extracted")
+                    return@withContext extracted
+                }
+            } else {
+                Log.w(TAG, "Backend Gemini OCR returned HTTP ${response.code()}. Falling back to local ML Kit OCR...")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Backend Gemini OCR endpoint failed: ${e.message}. Falling back to ML Kit...", e)
+        }
+
+        // On-device ML Kit fallback
+        val mlKitExtracted = extractTextWithMlKit(bitmap)
+        Log.i(TAG, "ML Kit Local OCR Result: $mlKitExtracted")
+        return@withContext mlKitExtracted
+    }
+
+    /**
+     * Programmatically generates a high-fidelity cargo shipping sticker Bitmap
+     * modeled after real AFA / SF Express package stickers.
+     */
+    fun generateStickerBitmap(labelId: Int): Bitmap {
+        val width = 600
+        val height = 720
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val canvas = android.graphics.Canvas(bitmap)
+        
+        val bgPaint = android.graphics.Paint().apply {
+            color = android.graphics.Color.WHITE
+            style = android.graphics.Paint.Style.FILL
+        }
+        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), bgPaint)
+        
+        val borderPaint = android.graphics.Paint().apply {
+            color = android.graphics.Color.BLACK
+            style = android.graphics.Paint.Style.STROKE
+            strokeWidth = 4f
+        }
+        canvas.drawRect(12f, 12f, (width - 12).toFloat(), (height - 12).toFloat(), borderPaint)
+
+        val headerPaint = android.graphics.Paint().apply {
+            color = android.graphics.Color.RED
+            style = android.graphics.Paint.Style.FILL
+        }
+        canvas.drawRect(12f, 12f, (width - 12).toFloat(), 90f, headerPaint)
+
+        val headerTextPaint = android.graphics.Paint().apply {
+            color = android.graphics.Color.WHITE
+            textSize = 32f
+            isFakeBoldText = true
+            textAlign = android.graphics.Paint.Align.CENTER
+        }
+        canvas.drawText("DEXCARGO LOGISTICS - AIR/SEA", (width / 2).toFloat(), 62f, headerTextPaint)
+
+        val boldLabelPaint = android.graphics.Paint().apply {
+            color = android.graphics.Color.BLACK
+            textSize = 22f
+            isFakeBoldText = true
+        }
+
+        val labelTextPaint = android.graphics.Paint().apply {
+            color = android.graphics.Color.BLACK
+            textSize = 20f
+        }
+
+        val dottedPaint = android.graphics.Paint().apply {
+            color = android.graphics.Color.GRAY
+            style = android.graphics.Paint.Style.STROKE
+            strokeWidth = 2f
+            pathEffect = android.graphics.DashPathEffect(floatArrayOf(10f, 10f), 0f)
+        }
+
+        if (labelId == 1) {
+            canvas.drawText("Tracking #: DEX-NBO-88219", 30f, 125f, boldLabelPaint)
+            canvas.drawLine(20f, 135f, 580f, 135f, dottedPaint)
+
+            canvas.drawText("Shipper: Guangzhou Hub Depot", 30f, 165f, labelTextPaint)
+            canvas.drawText("Company: Dex Cargo China Ltd", 30f, 190f, labelTextPaint)
+            canvas.drawText("Tel: +86 20 8331 9900", 30f, 215f, labelTextPaint)
+
+            canvas.drawLine(20f, 255f, 580f, 255f, dottedPaint)
+
+            canvas.drawText("Consignee: John Kamau", 30f, 285f, boldLabelPaint)
+            canvas.drawText("Tel: +254 712 345 678", 30f, 310f, labelTextPaint)
+            canvas.drawText("Address: Luthuli Ave, Nairobi", 30f, 335f, labelTextPaint)
+
+            canvas.drawLine(20f, 375f, 580f, 375f, dottedPaint)
+
+            canvas.drawText("Nature of Goods: Electronics & Accessories", 30f, 405f, labelTextPaint)
+            canvas.drawText("Total Weight: 14.50 kg", 30f, 435f, boldLabelPaint)
+            canvas.drawText("PCS: 2", 30f, 465f, boldLabelPaint)
+            canvas.drawText("Mode: Air Freight (Express)", 30f, 495f, labelTextPaint)
+
+            canvas.drawLine(20f, 540f, 580f, 540f, dottedPaint)
+
+            canvas.drawText("Payment Type: Freight Collect", 30f, 570f, labelTextPaint)
+            canvas.drawText("Total Charge: KES 18,500", 260f, 570f, boldLabelPaint)
+
+            canvas.drawLine(20f, 645f, 580f, 645f, dottedPaint)
+
+            canvas.drawText("Remark: Handle with care - Fragile", 30f, 680f, labelTextPaint)
+        } else {
+            val afaLogoPaint = android.graphics.Paint().apply {
+                color = android.graphics.Color.RED
+                textSize = 36f
+                isFakeBoldText = true
+            }
+
+            val headerRoutePaint = android.graphics.Paint().apply {
+                color = android.graphics.Color.BLACK
+                textSize = 32f
+                isFakeBoldText = true
+            }
+
+            val trackingNoPaint = android.graphics.Paint().apply {
+                color = android.graphics.Color.BLACK
+                textSize = 18f
+            }
+
+            canvas.drawText("AFA", 30f, 55f, afaLogoPaint)
+            canvas.drawText("CAN-NBO", 30f, 100f, headerRoutePaint)
+
+            val barcodePaint = android.graphics.Paint().apply {
+                color = android.graphics.Color.BLACK
+                strokeWidth = 3f
+            }
+            var barX = 180f
+            val rand = java.util.Random(126070655250L)
+            for (i in 0..35) {
+                barcodePaint.strokeWidth = if (rand.nextBoolean()) 6f else 2f
+                canvas.drawLine(barX, 40f, barX, 90f, barcodePaint)
+                barX += if (rand.nextBoolean()) 8f else 4f
+            }
+            canvas.drawText("126070655250", 180f, 120f, trackingNoPaint)
+            canvas.drawText("1/1", 520f, 100f, headerRoutePaint)
+
+            canvas.drawLine(20f, 135f, 580f, 135f, dottedPaint)
+
+            canvas.drawText("Shipper:Guangzhou Cargo Hub", 30f, 165f, labelTextPaint)
+            canvas.drawText("Company:Express Logistics", 30f, 190f, labelTextPaint)
+            canvas.drawText("Tel:1", 30f, 215f, labelTextPaint)
+
+            canvas.drawLine(20f, 255f, 580f, 255f, dottedPaint)
+
+            canvas.drawText("Consignee:Charles Ombongi", 30f, 285f, boldLabelPaint)
+            canvas.drawText("Tel:1", 30f, 310f, labelTextPaint)
+
+            canvas.drawLine(20f, 375f, 580f, 375f, dottedPaint)
+
+            canvas.drawText("Nature of the goods: 1", 30f, 405f, labelTextPaint)
+            canvas.drawText("Total Weight(kg): 0.5", 30f, 435f, boldLabelPaint)
+            canvas.drawText("PCS: 1", 30f, 465f, boldLabelPaint)
+
+            canvas.drawLine(20f, 540f, 580f, 540f, dottedPaint)
+
+            canvas.drawText("Payment Type:PP", 30f, 570f, labelTextPaint)
+            canvas.drawText("Total Charge:45.00RMB", 260f, 570f, boldLabelPaint)
+
+            canvas.drawLine(20f, 645f, 580f, 645f, dottedPaint)
+
+            canvas.drawText("Remark:SF511988877112", 30f, 680f, labelTextPaint)
+        }
+        
+        return bitmap
+    }
+}
+
 object CargoStickerSanitizer {
     /**
      * Sanitizes extracted field data against known cargo sticker patterns before assigning to form fields.
@@ -539,187 +743,5 @@ object CargoStickerSanitizer {
         return if (num != null && num >= 0.0) {
             if (num == num.toLong().toDouble()) num.toLong().toString() else String.format(java.util.Locale.US, "%.2f", num)
         } else ""
-    }
-}
-
-    /**
-     * Extracts shipping label details from a camera bitmap.
-     * Strictly uses Camera Image -> ML Kit Text Recognition -> Extracted Text.
-     */
-    suspend fun extractStickerData(bitmap: Bitmap, labelId: Int, isCustomPhoto: Boolean = false): ExtractedStickerData = withContext(Dispatchers.IO) {
-        val mlKitExtracted = extractTextWithMlKit(bitmap)
-        Log.i(TAG, "ML Kit Local OCR Result (Camera -> CameraX/Bitmap -> ML Kit Text Recognition): $mlKitExtracted")
-        return@withContext mlKitExtracted
-    }
-
-    /**
-     * Programmatically generates a high-fidelity cargo shipping sticker Bitmap
-     * modeled after real AFA / SF Express package stickers.
-     */
-    fun generateStickerBitmap(labelId: Int): Bitmap {
-        val width = 600
-        val height = 720
-        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-        val canvas = android.graphics.Canvas(bitmap)
-        
-        val bgPaint = android.graphics.Paint().apply {
-            color = android.graphics.Color.WHITE
-            style = android.graphics.Paint.Style.FILL
-        }
-        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), bgPaint)
-        
-        val borderPaint = android.graphics.Paint().apply {
-            color = android.graphics.Color.BLACK
-            style = android.graphics.Paint.Style.STROKE
-            strokeWidth = 4f
-        }
-        canvas.drawRect(12f, 12f, (width - 12).toFloat(), (height - 12).toFloat(), borderPaint)
-
-        val dottedPaint = android.graphics.Paint().apply {
-            color = android.graphics.Color.GRAY
-            style = android.graphics.Paint.Style.STROKE
-            strokeWidth = 2f
-            pathEffect = android.graphics.DashPathEffect(floatArrayOf(6f, 6f), 0f)
-        }
-        
-        val afaLogoPaint = android.graphics.Paint().apply {
-            color = android.graphics.Color.rgb(0, 140, 70) // AFA Green
-            textSize = 38f
-            isFakeBoldText = true
-            isAntiAlias = true
-        }
-
-        val headerRoutePaint = android.graphics.Paint().apply {
-            color = android.graphics.Color.BLACK
-            textSize = 32f
-            isFakeBoldText = true
-            isAntiAlias = true
-        }
-
-        val trackingNoPaint = android.graphics.Paint().apply {
-            color = android.graphics.Color.BLACK
-            textSize = 34f
-            isFakeBoldText = true
-            isAntiAlias = true
-        }
-
-        val labelTextPaint = android.graphics.Paint().apply {
-            color = android.graphics.Color.BLACK
-            textSize = 20f
-            isAntiAlias = true
-        }
-
-        val boldLabelPaint = android.graphics.Paint().apply {
-            color = android.graphics.Color.BLACK
-            textSize = 20f
-            isFakeBoldText = true
-            isAntiAlias = true
-        }
-
-        if (labelId == 1) {
-            // AFA Logo Header
-            canvas.drawText("AFA", 30f, 55f, afaLogoPaint)
-            canvas.drawText("HKG-NBO", 30f, 100f, headerRoutePaint)
-            
-            // Barcode & Tracking Number
-            val barcodePaint = android.graphics.Paint().apply {
-                color = android.graphics.Color.BLACK
-                strokeWidth = 3f
-            }
-            var barX = 180f
-            val rand = java.util.Random(1260707534987L)
-            for (i in 0..35) {
-                barcodePaint.strokeWidth = if (rand.nextBoolean()) 6f else 2f
-                canvas.drawLine(barX, 40f, barX, 90f, barcodePaint)
-                barX += if (rand.nextBoolean()) 8f else 4f
-            }
-            canvas.drawText("1260707534987", 180f, 120f, trackingNoPaint)
-            canvas.drawText("1/1", 520f, 100f, headerRoutePaint)
-
-            canvas.drawLine(20f, 135f, 580f, 135f, dottedPaint)
-
-            // Shipper section
-            canvas.drawText("Shipper:carrie", 30f, 165f, labelTextPaint)
-            canvas.drawText("Company:1", 30f, 190f, labelTextPaint)
-            canvas.drawText("Tel:1", 30f, 215f, labelTextPaint)
-            canvas.drawText("ADD:1", 30f, 240f, labelTextPaint)
-
-            canvas.drawLine(20f, 255f, 580f, 255f, dottedPaint)
-
-            // Consignee section
-            canvas.drawText("Consignee:Beatrice-Pheobe Wangui", 30f, 285f, boldLabelPaint)
-            canvas.drawText("Company:1", 30f, 310f, labelTextPaint)
-            canvas.drawText("Tel:1", 30f, 335f, labelTextPaint)
-            canvas.drawText("ADD:1", 30f, 360f, labelTextPaint)
-
-            canvas.drawLine(20f, 375f, 580f, 375f, dottedPaint)
-
-            // Cargo details
-            canvas.drawText("Nature of the goods: 1", 30f, 405f, labelTextPaint)
-            canvas.drawText("Total Weight(kg): 1", 30f, 435f, boldLabelPaint)
-            canvas.drawText("Total Volume(kg): 0.02", 30f, 465f, labelTextPaint)
-            canvas.drawText("PCS: 1", 30f, 495f, boldLabelPaint)
-            canvas.drawText("Total Chargeable Weight: 1", 30f, 525f, labelTextPaint)
-
-            canvas.drawLine(20f, 540f, 580f, 540f, dottedPaint)
-
-            // Charges
-            canvas.drawText("Payment Type:PP", 30f, 570f, labelTextPaint)
-            canvas.drawText("Declared Amount:1USD", 260f, 570f, labelTextPaint)
-            canvas.drawText("Insurance Charge:0RMB", 30f, 600f, labelTextPaint)
-            canvas.drawText("Other Charge:0RMB", 260f, 600f, labelTextPaint)
-            canvas.drawText("Freight Charge:0RMB", 30f, 630f, labelTextPaint)
-            canvas.drawText("Total Charge:96.00RMB", 260f, 630f, boldLabelPaint)
-
-            canvas.drawLine(20f, 645f, 580f, 645f, dottedPaint)
-
-            canvas.drawText("Remark:SF5119513646363", 30f, 680f, labelTextPaint)
-        } else {
-            // Label 2: CAN-NBO
-            canvas.drawText("AFA", 30f, 55f, afaLogoPaint)
-            canvas.drawText("CAN-NBO", 30f, 100f, headerRoutePaint)
-
-            val barcodePaint = android.graphics.Paint().apply {
-                color = android.graphics.Color.BLACK
-                strokeWidth = 3f
-            }
-            var barX = 180f
-            val rand = java.util.Random(126070655250L)
-            for (i in 0..35) {
-                barcodePaint.strokeWidth = if (rand.nextBoolean()) 6f else 2f
-                canvas.drawLine(barX, 40f, barX, 90f, barcodePaint)
-                barX += if (rand.nextBoolean()) 8f else 4f
-            }
-            canvas.drawText("126070655250", 180f, 120f, trackingNoPaint)
-            canvas.drawText("1/1", 520f, 100f, headerRoutePaint)
-
-            canvas.drawLine(20f, 135f, 580f, 135f, dottedPaint)
-
-            canvas.drawText("Shipper:Guangzhou Cargo Hub", 30f, 165f, labelTextPaint)
-            canvas.drawText("Company:Express Logistics", 30f, 190f, labelTextPaint)
-            canvas.drawText("Tel:1", 30f, 215f, labelTextPaint)
-
-            canvas.drawLine(20f, 255f, 580f, 255f, dottedPaint)
-
-            canvas.drawText("Consignee:Charles Ombongi", 30f, 285f, boldLabelPaint)
-            canvas.drawText("Tel:1", 30f, 310f, labelTextPaint)
-
-            canvas.drawLine(20f, 375f, 580f, 375f, dottedPaint)
-
-            canvas.drawText("Nature of the goods: 1", 30f, 405f, labelTextPaint)
-            canvas.drawText("Total Weight(kg): 0.5", 30f, 435f, boldLabelPaint)
-            canvas.drawText("PCS: 1", 30f, 465f, boldLabelPaint)
-
-            canvas.drawLine(20f, 540f, 580f, 540f, dottedPaint)
-
-            canvas.drawText("Payment Type:PP", 30f, 570f, labelTextPaint)
-            canvas.drawText("Total Charge:45.00RMB", 260f, 570f, boldLabelPaint)
-
-            canvas.drawLine(20f, 645f, 580f, 645f, dottedPaint)
-
-            canvas.drawText("Remark:SF511988877112", 30f, 680f, labelTextPaint)
-        }
-        
-        return bitmap
     }
 }

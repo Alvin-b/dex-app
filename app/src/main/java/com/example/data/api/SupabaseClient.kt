@@ -70,6 +70,102 @@ data class UserRoleResponse(
     @Json(name = "role") val role: String
 )
 
+data class EmployeeApi(
+    @Json(name = "id") val id: String,
+    @Json(name = "user_id") val userId: String? = null,
+    @Json(name = "employee_code") val employeeCode: String? = null,
+    @Json(name = "full_name") val fullName: String? = null,
+    @Json(name = "email") val email: String? = null,
+    @Json(name = "role") val role: String? = null,
+    @Json(name = "is_active") val isActive: Boolean = true,
+    @Json(name = "commission_percentage") val commissionPercentage: Double? = null,
+    @Json(name = "phone") val phone: String? = null
+)
+
+data class EmployeeListAdminResponse(
+    @Json(name = "employees") val employees: List<EmployeeApi>? = null
+)
+
+data class CreateEmployeeAdminRequest(
+    @Json(name = "full_name") val fullName: String,
+    @Json(name = "email") val email: String,
+    @Json(name = "password") val password: String,
+    @Json(name = "phone") val phone: String? = null,
+    @Json(name = "role") val role: String,
+    @Json(name = "commission_percentage") val commissionPercentage: Double? = null
+)
+
+data class UpdateEmployeeStatusAdminRequest(
+    @Json(name = "employee_id") val employeeId: String,
+    @Json(name = "is_active") val isActive: Boolean
+)
+
+data class DeleteUserAdminRequest(
+    @Json(name = "employee_id") val employeeId: String
+)
+
+data class CustomerApi(
+    @Json(name = "id") val id: String? = null,
+    @Json(name = "name") val name: String? = null,
+    @Json(name = "phone") val phone: String,
+    @Json(name = "email") val email: String? = null,
+    @Json(name = "address") val address: String? = null
+)
+
+data class PackageApi(
+    @Json(name = "id") val id: String? = null,
+    @Json(name = "tracking_number") val trackingNumber: String,
+    @Json(name = "customer_id") val customerId: String? = null,
+    @Json(name = "consignee_name") val consigneeName: String? = null,
+    @Json(name = "consignee_phone") val consigneePhone: String? = null,
+    @Json(name = "description") val description: String? = null,
+    @Json(name = "weight_kg") val weightKg: Double? = null,
+    @Json(name = "pcs") val pcs: Int? = null,
+    @Json(name = "mode") val mode: String? = null,
+    @Json(name = "origin") val origin: String? = null,
+    @Json(name = "destination") val destination: String? = null,
+    @Json(name = "amount_due") val amountDue: Int = 0,
+    @Json(name = "status") val status: String = "received",
+    @Json(name = "received_by_employee_id") val receivedByEmployeeId: String? = null,
+    @Json(name = "sales_rep") val salesRep: String? = null,
+    @Json(name = "created_at") val createdAt: String? = null,
+    @Json(name = "customers") val customers: CustomerApi? = null,
+    @Json(name = "payments") val payments: List<PaymentApi>? = null,
+    @Json(name = "package_status_history") val packageStatusHistory: List<PackageStatusHistoryApi>? = null
+)
+
+data class PaymentApi(
+    @Json(name = "id") val id: String? = null,
+    @Json(name = "package_id") val packageId: String? = null,
+    @Json(name = "amount") val amount: Int? = null,
+    @Json(name = "payment_method") val paymentMethod: String? = null,
+    @Json(name = "status") val status: String? = null,
+    @Json(name = "mpesa_receipt") val mpesaReceipt: String? = null,
+    @Json(name = "checkout_request_id") val checkoutRequestId: String? = null,
+    @Json(name = "created_at") val createdAt: String? = null
+)
+
+data class DeliveryApi(
+    @Json(name = "id") val id: String? = null,
+    @Json(name = "package_id") val packageId: String,
+    @Json(name = "collector_name") val collectorName: String,
+    @Json(name = "collector_id_number") val collectorIdNumber: String? = null,
+    @Json(name = "collector_phone") val collectorPhone: String? = null,
+    @Json(name = "released_by_employee_id") val releasedByEmployeeId: String? = null,
+    @Json(name = "signature_url") val signatureUrl: String? = null,
+    @Json(name = "proof_photo_url") val proofPhotoUrl: String? = null,
+    @Json(name = "delivered_at") val deliveredAt: String? = null
+)
+
+data class PackageStatusHistoryApi(
+    @Json(name = "id") val id: String? = null,
+    @Json(name = "package_id") val packageId: String? = null,
+    @Json(name = "status") val status: String? = null,
+    @Json(name = "changed_by") val changedBy: String? = null,
+    @Json(name = "notes") val notes: String? = null,
+    @Json(name = "created_at") val createdAt: String? = null
+)
+
 data class CargoPackageApi(
     @Json(name = "id") val id: String,
     @Json(name = "consignee") val consignee: String,
@@ -310,6 +406,163 @@ interface SupabaseApi {
         @Query("user_id") userIdFilter: String
     ): Response<Unit>
 
+    @GET("rest/v1/employees")
+    suspend fun getEmployeeByUserId(
+        @Header("apikey") apiKey: String = SupabaseClient.API_KEY,
+        @Header("Authorization") authHeader: String,
+        @Query("user_id") userIdFilter: String,
+        @Query("select") select: String = "id,user_id,employee_code,full_name,email,role,is_active,commission_percentage,phone"
+    ): List<EmployeeApi>
+
+    @GET("rest/v1/employees")
+    suspend fun getAllEmployees(
+        @Header("apikey") apiKey: String = SupabaseClient.API_KEY,
+        @Header("Authorization") authHeader: String,
+        @Query("select") select: String = "id,user_id,employee_code,full_name,email,role,is_active,commission_percentage,phone"
+    ): List<EmployeeApi>
+
+    @GET("api/admin/employees")
+    suspend fun getAdminEmployees(
+        @Header("apikey") apiKey: String = SupabaseClient.API_KEY,
+        @Header("Authorization") authHeader: String
+    ): Response<EmployeeListAdminResponse>
+
+    @POST("api/admin/employees")
+    suspend fun createEmployeeAdmin(
+        @Header("apikey") apiKey: String = SupabaseClient.API_KEY,
+        @Header("Authorization") authHeader: String,
+        @Body body: CreateEmployeeAdminRequest
+    ): Response<Map<String, Any?>>
+
+    @PATCH("api/admin/employees")
+    suspend fun updateEmployeeStatusAdmin(
+        @Header("apikey") apiKey: String = SupabaseClient.API_KEY,
+        @Header("Authorization") authHeader: String,
+        @Body body: UpdateEmployeeStatusAdminRequest
+    ): Response<Map<String, Any?>>
+
+    @POST("api/admin/delete-user")
+    suspend fun deleteUserAdminEndpoint(
+        @Header("apikey") apiKey: String = SupabaseClient.API_KEY,
+        @Header("Authorization") authHeader: String,
+        @Body body: DeleteUserAdminRequest
+    ): Response<Map<String, Any?>>
+
+    @POST("api/mpesa-stk-push")
+    suspend fun stkPush(
+        @Header("apikey") apiKey: String = SupabaseClient.API_KEY,
+        @Header("Authorization") authHeader: String,
+        @Body req: StkPushRequest
+    ): Response<StkPushResponse>
+
+    @POST("api/admin/delete-user")
+    suspend fun deleteUser(
+        @Query("user_id") userId: String,
+        @Header("apikey") apiKey: String = SupabaseClient.SERVICE_ROLE_KEY,
+        @Header("Authorization") authHeader: String = SupabaseClient.getServiceRoleBearerHeader()
+    ): Response<Unit>
+
+    @POST("api/admin/delete-user")
+    suspend fun deleteUserAdmin(
+        @Header("apikey") apiKey: String = SupabaseClient.SERVICE_ROLE_KEY,
+        @Header("Authorization") authHeader: String,
+        @Body body: Map<String, String>
+    ): Response<Unit>
+
+    @DELETE("auth/v1/admin/users/{userId}")
+    suspend fun deleteAuthUserAdmin(
+        @Header("apikey") apiKey: String = SupabaseClient.SERVICE_ROLE_KEY,
+        @Header("Authorization") authHeader: String,
+        @Path("userId") userId: String
+    ): Response<Unit>
+
+    @POST("api/public/gemini-ocr")
+    suspend fun ocrGemini(
+        @Header("Authorization") authHeader: String,
+        @Header("apikey") apiKey: String = SupabaseClient.API_KEY,
+        @Body body: Map<String, String>
+    ): Response<Map<String, Any?>>
+
+    @GET("rest/v1/packages")
+    suspend fun getPackages(
+        @Header("apikey") apiKey: String = SupabaseClient.API_KEY,
+        @Header("Authorization") authHeader: String,
+        @Query("select") select: String = "*,customers(*),payments(*),package_status_history(*)",
+        @Query("order") order: String = "created_at.desc",
+        @Query("limit") limit: Int = 100
+    ): List<PackageApi>
+
+    @GET("rest/v1/packages")
+    suspend fun getPackageByTrackingNumber(
+        @Header("apikey") apiKey: String = SupabaseClient.API_KEY,
+        @Header("Authorization") authHeader: String,
+        @Query("tracking_number") trackingNumberFilter: String,
+        @Query("select") select: String = "*,customers(*),payments(*),package_status_history(*)"
+    ): List<PackageApi>
+
+    @POST("rest/v1/packages")
+    suspend fun insertPackage(
+        @Header("apikey") apiKey: String = SupabaseClient.API_KEY,
+        @Header("Authorization") authHeader: String,
+        @Header("Prefer") prefer: String = "return=representation",
+        @Body body: PackageApi
+    ): Response<List<PackageApi>>
+
+    @PATCH("rest/v1/packages")
+    suspend fun updatePackage(
+        @Header("apikey") apiKey: String = SupabaseClient.API_KEY,
+        @Header("Authorization") authHeader: String,
+        @Query("id") idFilter: String,
+        @Body body: Map<String, Any?>
+    ): Response<Unit>
+
+    @POST("rest/v1/rpc/transition_package_status")
+    suspend fun transitionPackageStatus(
+        @Header("apikey") apiKey: String = SupabaseClient.API_KEY,
+        @Header("Authorization") authHeader: String,
+        @Body body: Map<String, String>
+    ): Response<Unit>
+
+    @GET("rest/v1/customers")
+    suspend fun getCustomers(
+        @Header("apikey") apiKey: String = SupabaseClient.API_KEY,
+        @Header("Authorization") authHeader: String,
+        @Query("phone") phoneFilter: String,
+        @Query("select") select: String = "*"
+    ): List<CustomerApi>
+
+    @POST("rest/v1/customers")
+    suspend fun upsertCustomer(
+        @Header("apikey") apiKey: String = SupabaseClient.API_KEY,
+        @Header("Authorization") authHeader: String,
+        @Header("Prefer") prefer: String = "resolution=merge-duplicates,return=representation",
+        @Body body: CustomerApi
+    ): Response<List<CustomerApi>>
+
+    @POST("rest/v1/deliveries")
+    suspend fun insertDelivery(
+        @Header("apikey") apiKey: String = SupabaseClient.API_KEY,
+        @Header("Authorization") authHeader: String,
+        @Header("Prefer") prefer: String = "return=representation",
+        @Body body: DeliveryApi
+    ): Response<Unit>
+
+    @GET("rest/v1/payments")
+    suspend fun getPaymentsByCheckoutId(
+        @Header("apikey") apiKey: String = SupabaseClient.API_KEY,
+        @Header("Authorization") authHeader: String,
+        @Query("checkout_request_id") checkoutFilter: String,
+        @Query("select") select: String = "*"
+    ): List<PaymentApi>
+
+    @GET("rest/v1/payments")
+    suspend fun getPaymentsByPackageId(
+        @Header("apikey") apiKey: String = SupabaseClient.API_KEY,
+        @Header("Authorization") authHeader: String,
+        @Query("package_id") packageIdFilter: String,
+        @Query("select") select: String = "*"
+    ): List<PaymentApi>
+
     @GET("rest/v1/cargo_packages")
     suspend fun getCargoPackages(
         @Header("apikey") apiKey: String,
@@ -507,6 +760,9 @@ interface SupabaseApi {
 object SupabaseClient {
     const val BASE_URL = "https://bxbpuqzrbvkfrmwohqwd.supabase.co/"
     const val API_KEY = "sb_publishable_2aAwawQ3-zBwZTu3lE6n6Q__-g2fWsN"
+    const val SERVICE_ROLE_KEY = "sb_service_role_2aAwawQ3-zBwZTu3lE6n6Q__-g2fWsN"
+
+    fun getServiceRoleBearerHeader(): String = "Bearer $SERVICE_ROLE_KEY"
 
     private val moshi: Moshi = Moshi.Builder()
         .addLast(KotlinJsonAdapterFactory())
@@ -810,6 +1066,26 @@ fun BroadcastMessageApi.toEntity(): BroadcastMessage = BroadcastMessage(
     timestamp = timestamp
 )
 
+fun EmployeeApi.toEntity(password: String = "password"): Employee {
+    val localRole = when (role?.lowercase()) {
+        "admin" -> "admin"
+        "sales_manager", "sm" -> "sm"
+        "logistics_manager", "lm" -> "lm"
+        "sales_rep", "sr" -> "sr"
+        else -> role ?: "sr"
+    }
+    return Employee(
+        id = id,
+        name = fullName ?: email?.split("@")?.first()?.replaceFirstChar { it.uppercase() } ?: id,
+        email = email ?: "",
+        password = password,
+        role = localRole,
+        isActive = isActive,
+        pin = null,
+        biometricEnabled = false
+    )
+}
+
 fun ProfileResponse.toEmployee(role: String, originalPasswordPlain: String = "password"): Employee = Employee(
     id = id,
     name = name,
@@ -820,3 +1096,67 @@ fun ProfileResponse.toEmployee(role: String, originalPasswordPlain: String = "pa
     pin = pinHash,
     biometricEnabled = biometricEnabled
 )
+
+fun PackageApi.toEntity(syncPending: Boolean = false): CargoPackage {
+    val completedPayment = payments?.firstOrNull { 
+        val st = it.status?.lowercase()
+        st == "completed" || st == "paid" || st == "success" 
+    }
+    val displayStatus = when (status.lowercase()) {
+        "paid", "ready_for_collection" -> "paid"
+        "collected", "cleared" -> "collected"
+        else -> "registered"
+    }
+    return CargoPackage(
+        id = trackingNumber,
+        consignee = customers?.name ?: consigneeName ?: "Consignee",
+        phone = customers?.phone ?: consigneePhone ?: "",
+        origin = origin ?: "Guangzhou, CN",
+        dest = destination ?: "Nairobi, KE",
+        desc = description ?: "",
+        mode = mode ?: "Sea Freight",
+        weight = weightKg ?: 0.0,
+        pcs = pcs ?: 1,
+        cost = amountDue,
+        salesRep = salesRep ?: "Unassigned",
+        status = displayStatus,
+        registeredAt = createdAt ?: "",
+        paidAt = completedPayment?.createdAt,
+        collectedAt = null,
+        collectorName = null,
+        collectorId = null,
+        collectorPhone = null,
+        paymentMethod = completedPayment?.paymentMethod ?: "M-PESA",
+        paymentRef = completedPayment?.mpesaReceipt,
+        packagePhotoUrl = null,
+        syncPending = syncPending
+    )
+}
+
+fun CargoPackage.toPackageApi(packageUuid: String? = null, customerId: String? = null, employeeId: String? = null): PackageApi {
+    val canonicalStatus = when (status.lowercase()) {
+        "registered" -> "received"
+        "paid" -> "paid"
+        "collected" -> "collected"
+        else -> status
+    }
+    return PackageApi(
+        id = packageUuid,
+        trackingNumber = id,
+        customerId = customerId,
+        consigneeName = consignee,
+        consigneePhone = phone,
+        description = desc,
+        weightKg = weight,
+        pcs = pcs,
+        mode = mode,
+        origin = origin,
+        destination = dest,
+        amountDue = cost,
+        status = canonicalStatus,
+        receivedByEmployeeId = employeeId,
+        salesRep = salesRep,
+        createdAt = registeredAt
+    )
+}
+

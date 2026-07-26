@@ -178,52 +178,35 @@ class DexcargoRepository(private val database: AppDatabase) {
             cargoPackage
         }
         database.cargoPackageDao().insertPackage(pkgToSave)
-        try {
-            val pkgMap = hashMapOf(
-                "id" to cargoPackage.id,
-                "consignee" to cargoPackage.consignee,
-                "phone" to cargoPackage.phone,
-                "origin" to cargoPackage.origin,
-                "dest" to cargoPackage.dest,
-                "desc" to cargoPackage.desc,
-                "mode" to cargoPackage.mode,
-                "weight" to cargoPackage.weight,
-                "pcs" to cargoPackage.pcs,
-                "cost" to cargoPackage.cost,
-                "salesRep" to cargoPackage.salesRep,
-                "status" to cargoPackage.status,
-                "registeredAt" to cargoPackage.registeredAt,
-                "paidAt" to (cargoPackage.paidAt ?: ""),
-                "collectedAt" to (cargoPackage.collectedAt ?: ""),
-                "collectorName" to (cargoPackage.collectorName ?: ""),
-                "collectorId" to (cargoPackage.collectorId ?: ""),
-                "collectorPhone" to (cargoPackage.collectorPhone ?: ""),
-                "paymentMethod" to (cargoPackage.paymentMethod ?: ""),
-                "paymentRef" to (cargoPackage.paymentRef ?: ""),
-                "packagePhotoUrl" to (cargoPackage.packagePhotoUrl ?: "")
-            )
-            com.google.firebase.firestore.FirebaseFirestore.getInstance()
-                .collection("cargo_packages")
-                .document(cargoPackage.id)
-                .set(pkgMap)
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
         if (online) {
             try {
-                SupabaseClient.api.insertCargoPackage(
+                // 1. Upsert Customer
+                SupabaseClient.api.upsertCustomer(
                     apiKey = SupabaseClient.API_KEY,
                     authHeader = SupabaseClient.getBearerHeader(),
-                    body = cargoPackage.toApi()
+                    body = CustomerApi(
+                        name = pkgToSave.consignee,
+                        phone = pkgToSave.phone
+                    )
                 )
-                // If successfully written to server, clear sync pending
-                database.cargoPackageDao().insertPackage(cargoPackage.copy(syncPending = false))
+
+                // 2. Insert into canonical packages table
+                SupabaseClient.api.insertPackage(
+                    apiKey = SupabaseClient.API_KEY,
+                    authHeader = SupabaseClient.getBearerHeader(),
+                    body = pkgToSave.toPackageApi(
+                        employeeId = SupabaseClient.currentUserId
+                    )
+                )
+
+                // Clear sync pending on local DB
+                database.cargoPackageDao().insertPackage(pkgToSave.copy(syncPending = false))
             } catch (e: Exception) {
                 e.printStackTrace()
-                database.cargoPackageDao().insertPackage(cargoPackage.copy(syncPending = true))
+                database.cargoPackageDao().insertPackage(pkgToSave.copy(syncPending = true))
             }
-        } else if (!online) {
-            database.cargoPackageDao().insertPackage(cargoPackage.copy(syncPending = true))
+        } else {
+            database.cargoPackageDao().insertPackage(pkgToSave.copy(syncPending = true))
         }
     }
 
@@ -472,44 +455,76 @@ class DexcargoRepository(private val database: AppDatabase) {
             e.printStackTrace()
         }
 
-        // 1. Sync profiles & roles -> Employees (preserving passwords!)
+        // 1. Sync employees
         try {
-            val profiles = SupabaseClient.api.getAllProfiles(apiKey, authHeader)
-            val allRoles = SupabaseClient.api.getAllUserRoles(apiKey, authHeader)
-            val rolesMap = allRoles.associateBy { it.userId }
-
-            val existingLocalEmps = database.employeeDao().getAllEmployees().firstOrNull() ?: emptyList()
-            val existingById = existingLocalEmps.associateBy { it.id }
-            val existingByEmail = existingLocalEmps.associateBy { it.email.lowercase() }
-
-            val employeeList = profiles.map { profile ->
-                val rawRole = rolesMap[profile.id]?.role ?: "sr"
-                val role = if (rawRole == "clerk") "lm" else rawRole
-                val existing = existingById[profile.id] ?: existingByEmail[profile.email.lowercase()]
-                val preservedPassword = existing?.password?.takeIf { it.isNotBlank() } ?: "password"
-
-                Employee(
-                    id = profile.id,
-                    name = profile.name,
-                    email = profile.email,
-                    password = preservedPassword,
-                    role = role,
-                    isActive = profile.isActive,
-                    pin = profile.pinHash ?: existing?.pin,
-                    biometricEnabled = profile.biometricEnabled ?: existing?.biometricEnabled ?: false
-                )
+            val empApiList = try {
+                SupabaseClient.api.getAllEmployees(apiKey, authHeader)
+            } catch (e: Exception) {
+                emptyList()
             }
-            if (employeeList.isNotEmpty()) {
-                database.employeeDao().insertEmployees(employeeList)
+            if (empApiList.isNotEmpty()) {
+                val existingLocalEmps = database.employeeDao().getAllEmployees().firstOrNull() ?: emptyList()
+                val existingById = existingLocalEmps.associateBy { it.id }
+                val mappedEmps = empApiList.map { empApi ->
+                    val existing = existingById[empApi.id]
+                    val preservedPass = existing?.password?.takeIf { it.isNotBlank() } ?: "password"
+                    empApi.toEntity(password = preservedPass)
+                }
+                database.employeeDao().insertEmployees(mappedEmps)
+            } else {
+                val profiles = SupabaseClient.api.getAllProfiles(apiKey, authHeader)
+                val allRoles = SupabaseClient.api.getAllUserRoles(apiKey, authHeader)
+                val rolesMap = allRoles.associateBy { it.userId }
+
+                val existingLocalEmps = database.employeeDao().getAllEmployees().firstOrNull() ?: emptyList()
+                val existingById = existingLocalEmps.associateBy { it.id }
+                val existingByEmail = existingLocalEmps.associateBy { it.email.lowercase() }
+
+                val employeeList = profiles.map { profile ->
+                    val rawRole = rolesMap[profile.id]?.role ?: "sr"
+                    val role = if (rawRole == "clerk") "lm" else rawRole
+                    val existing = existingById[profile.id] ?: existingByEmail[profile.email.lowercase()]
+                    val preservedPassword = existing?.password?.takeIf { it.isNotBlank() } ?: "password"
+
+                    Employee(
+                        id = profile.id,
+                        name = profile.name,
+                        email = profile.email,
+                        password = preservedPassword,
+                        role = role,
+                        isActive = profile.isActive,
+                        pin = profile.pinHash ?: existing?.pin,
+                        biometricEnabled = profile.biometricEnabled ?: existing?.biometricEnabled ?: false
+                    )
+                }
+                if (employeeList.isNotEmpty()) {
+                    database.employeeDao().insertEmployees(employeeList)
+                }
             }
         } catch (e: Exception) {
             e.printStackTrace()
         }
 
-        // 2. Sync cargo_packages
+        // 2. Sync packages
         try {
-            val packagesApi = SupabaseClient.api.getCargoPackages(apiKey, authHeader)
-            val packagesEntities = packagesApi.map { it.toEntity(syncPending = false) }
+            val canonicalPackages = try {
+                val canonicalList = SupabaseClient.api.getPackages(apiKey = apiKey, authHeader = authHeader)
+                canonicalList.map { it.toEntity(syncPending = false) }
+            } catch (e: Exception) {
+                emptyList()
+            }
+
+            val legacyPackages = if (canonicalPackages.isEmpty()) {
+                try {
+                    val legacyList = SupabaseClient.api.getCargoPackages(apiKey, authHeader)
+                    legacyList.map { it.toEntity(syncPending = false) }
+                } catch (e: Exception) {
+                    emptyList()
+                }
+            } else emptyList()
+
+            val packagesEntities = if (canonicalPackages.isNotEmpty()) canonicalPackages else legacyPackages
+
             if (packagesEntities.isNotEmpty()) {
                 val localMap = database.cargoPackageDao().getAllPackages().firstOrNull()?.associateBy { it.id } ?: emptyMap()
                 val mergedEntities = packagesEntities.map { incoming ->

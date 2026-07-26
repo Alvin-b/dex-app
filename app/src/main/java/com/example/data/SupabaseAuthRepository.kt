@@ -83,65 +83,38 @@ class SupabaseAuthRepository(
             )
             if (response.isSuccessful && response.body() != null) {
                 val body = response.body()!!
+                val authUserId = body.user.id
                 
                 // Store tokens in SupabaseClient and SharedPreferences (handled via onSessionChanged)
                 saveSession(
                     token = body.accessToken,
                     refresh = body.refreshToken,
-                    userId = body.user.id,
+                    userId = authUserId,
                     email = body.user.email,
                     expiresInSec = body.expiresIn
                 )
 
-                // Fetch Profile and Role from backend
-                val profilesList = SupabaseClient.api.getProfile(
-                    apiKey = SupabaseClient.API_KEY,
-                    authHeader = SupabaseClient.getBearerHeader(),
-                    idFilter = "eq.${body.user.id}"
-                )
-                val profile = profilesList.firstOrNull() ?: ProfileResponse(
-                    id = body.user.id,
-                    name = email.split("@").first().replaceFirstChar { it.uppercase() },
-                    email = body.user.email,
-                    isActive = true,
-                    pinHash = null,
-                    biometricEnabled = false
-                )
-
-                val rolesList = SupabaseClient.api.getUserRoles(
-                    apiKey = SupabaseClient.API_KEY,
-                    authHeader = SupabaseClient.getBearerHeader(),
-                    userIdFilter = "eq.${body.user.id}"
-                )
-                val role = rolesList.firstOrNull()?.role ?: "sr"
-
-                val employee = Employee(
-                    id = profile.id,
-                    name = profile.name,
-                    email = profile.email,
-                    password = pass, // Cache password for offline fallback
-                    role = role,
-                    isActive = profile.isActive,
-                    pin = profile.pinHash,
-                    biometricEnabled = profile.biometricEnabled
-                )
-
-                if (profilesList.isEmpty()) {
-                    try {
-                        SupabaseClient.api.createProfile(
-                            apiKey = SupabaseClient.API_KEY,
-                            authHeader = SupabaseClient.getBearerHeader(),
-                            profile = profile
-                        )
-                        SupabaseClient.api.createUserRole(
-                            apiKey = SupabaseClient.API_KEY,
-                            authHeader = SupabaseClient.getBearerHeader(),
-                            role = UserRoleResponse(userId = body.user.id, role = role)
-                        )
-                    } catch (e: Exception) {
-                        e.printStackTrace()
-                    }
+                // Resolve staff member with GET /rest/v1/employees?user_id=eq.<auth_user_id>
+                val employeesList = try {
+                    SupabaseClient.api.getEmployeeByUserId(
+                        apiKey = SupabaseClient.API_KEY,
+                        authHeader = SupabaseClient.getBearerHeader(),
+                        userIdFilter = "eq.$authUserId"
+                    )
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    emptyList()
                 }
+
+                val empApi = employeesList.firstOrNull()
+                if (empApi == null || !empApi.isActive) {
+                    // Sign out and enforce unprovisioned account message
+                    signOut()
+                    return@withContext Result.failure(Exception("Account is not provisioned. Contact an administrator."))
+                }
+
+                // Note: auth_user_id and employees.id are different UUIDs. empApi.id is employees.id.
+                val employee = empApi.toEntity(password = pass)
 
                 // Cache in local DB
                 database.employeeDao().insertEmployee(employee)
@@ -161,7 +134,6 @@ class SupabaseAuthRepository(
             }
         } catch (e: Exception) {
             e.printStackTrace()
-            // Offline fallback on exception (like no network)
             try {
                 val localEmp = database.employeeDao().getAllEmployees().first().find {
                     it.email.equals(email, ignoreCase = true) && it.password == pass
@@ -179,39 +151,29 @@ class SupabaseAuthRepository(
     }
 
     suspend fun restoreSessionOnStartup(): Employee? = withContext(Dispatchers.IO) {
-        val userId = SupabaseClient.currentUserId ?: return@withContext null
+        val authUserId = SupabaseClient.currentUserId ?: return@withContext null
         try {
             // First look in local DB cache
-            val localEmp = database.employeeDao().getEmployeeById(userId)
+            val localEmps = database.employeeDao().getAllEmployees().first()
+            val localEmp = localEmps.find { it.id == authUserId || it.email.equals(SupabaseClient.currentUserEmail, ignoreCase = true) }
             if (localEmp != null && localEmp.isActive) {
                 _currentEmployee.value = localEmp
                 return@withContext localEmp
             }
 
-            // Otherwise, fetch from Supabase if online
-            val profilesList = SupabaseClient.api.getProfile(
+            // Fetch from Supabase employees table
+            val employeesList = SupabaseClient.api.getEmployeeByUserId(
                 apiKey = SupabaseClient.API_KEY,
                 authHeader = SupabaseClient.getBearerHeader(),
-                idFilter = "eq.$userId"
+                userIdFilter = "eq.$authUserId"
             )
-            val profile = profilesList.firstOrNull() ?: return@withContext null
-            val rolesList = SupabaseClient.api.getUserRoles(
-                apiKey = SupabaseClient.API_KEY,
-                authHeader = SupabaseClient.getBearerHeader(),
-                userIdFilter = "eq.$userId"
-            )
-            val role = rolesList.firstOrNull()?.role ?: "sr"
+            val empApi = employeesList.firstOrNull()
+            if (empApi == null || !empApi.isActive) {
+                signOut()
+                return@withContext null
+            }
 
-            val employee = Employee(
-                id = profile.id,
-                name = profile.name,
-                email = profile.email,
-                password = "password", // fallback
-                role = role,
-                isActive = profile.isActive,
-                pin = profile.pinHash,
-                biometricEnabled = profile.biometricEnabled
-            )
+            val employee = empApi.toEntity()
             database.employeeDao().insertEmployee(employee)
             _currentEmployee.value = employee
             employee

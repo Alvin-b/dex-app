@@ -1,6 +1,7 @@
 package com.example.data
 
 import android.util.Log
+import com.example.data.api.DeleteUserAdminRequest
 import com.example.data.api.ProfileResponse
 import com.example.data.api.SupabaseClient
 import com.example.data.api.UserRoleResponse
@@ -60,7 +61,7 @@ class AdminRepository(private val database: AppDatabase) {
             Log.e("AdminRepository", "Failed to save user $uid to local database: ${e.localizedMessage}", e)
         }
 
-        // 2. Write user object to Firestore
+        // 2. Write user object to Firestore with explicit validation and logging
         val userMap = hashMapOf(
             "id" to uid,
             "name" to employee.name,
@@ -73,15 +74,23 @@ class AdminRepository(private val database: AppDatabase) {
             "updatedAt" to System.currentTimeMillis()
         )
 
+        Log.d("AdminRepository", "Writing user object to Firestore collection 'users' document '$uid' with payload: $userMap")
+
+        var firestoreErrorMsg: String? = null
         val firestoreSuccess = try {
             firestore.collection("users")
                 .document(uid)
                 .set(userMap)
                 .await()
-            Log.d("AdminRepository", "Firestore write succeeded for UID: $uid")
+            Log.d("AdminRepository", "Firestore write succeeded for user document UID: $uid")
             true
+        } catch (fe: com.google.firebase.firestore.FirebaseFirestoreException) {
+            firestoreErrorMsg = "Firestore permission/security or data error [${fe.code}]: ${fe.localizedMessage}"
+            Log.e("AdminRepository", firestoreErrorMsg, fe)
+            false
         } catch (e: Exception) {
-            Log.e("AdminRepository", "Firestore write FAILED for UID $uid: ${e.localizedMessage}", e)
+            firestoreErrorMsg = "Firestore write failed for UID $uid: ${e.localizedMessage}"
+            Log.e("AdminRepository", firestoreErrorMsg, e)
             false
         }
 
@@ -128,107 +137,72 @@ class AdminRepository(private val database: AppDatabase) {
         return if (firestoreSuccess) {
             Result.success(true)
         } else {
-            Result.failure(Exception("Firestore document set failed for UID $uid"))
+            Result.failure(Exception(firestoreErrorMsg ?: "Firestore document set failed for UID $uid"))
         }
     }
 
     /**
      * Admin deleteUser:
-     * 1. Removes Firestore document
-     * 2. Triggers cloud function to revoke user refresh tokens
-     * 3. Cleans up Supabase profile & user roles
-     * 4. Deletes from local Room DB
+     * Calls POST /api/admin/delete-user with { "employee_id": "<employees.id>" }.
+     * The server deactivates the employee and deletes the linked Supabase Auth account.
+     * After a successful response, Android deletes local Room DB entry and matching Firestore doc.
      */
     suspend fun deleteUser(uid: String, online: Boolean = true): Result<Boolean> {
-        if (uid == "ADM-001") {
-            val msg = "Security rule: Cannot delete primary administrator account (ADM-001)."
+        val cleanUid = uid.trim()
+        val currentUserId = SupabaseClient.currentUserId ?: ""
+
+        if (cleanUid.equals("ADM-001", ignoreCase = true) || cleanUid.equals("ADM-0001", ignoreCase = true)) {
+            val msg = "Security rule: Cannot delete primary administrator account ($cleanUid)."
             Log.e("AdminRepository", msg)
             return Result.failure(IllegalArgumentException(msg))
         }
 
-        Log.d("AdminRepository", "Initiating Admin deleteUser for UID: $uid")
-
-        // Local DB removal
-        try {
-            database.employeeDao().deleteEmployeeById(uid)
-            Log.d("AdminRepository", "Deleted employee $uid from local Room database.")
-        } catch (e: Exception) {
-            Log.e("AdminRepository", "Failed deleting local database employee $uid: ${e.localizedMessage}", e)
+        if (cleanUid.isNotBlank() && cleanUid.equals(currentUserId, ignoreCase = true)) {
+            val msg = "Security rule: Cannot delete currently logged-in account ($cleanUid)."
+            Log.e("AdminRepository", msg)
+            return Result.failure(IllegalArgumentException(msg))
         }
 
-        // Firestore removal
-        try {
-            firestore.collection("users").document(uid).delete().await()
-            Log.d("AdminRepository", "Firestore document deleted for UID $uid")
+        Log.d("AdminRepository", "Initiating Admin deleteUser for employee_id: $cleanUid")
 
-            val queryDocs = firestore.collection("users").whereEqualTo("id", uid).get().await()
-            for (doc in queryDocs.documents) {
-                doc.reference.delete().await()
-            }
-            Log.d("AdminRepository", "Removed secondary matching Firestore documents for id $uid")
-        } catch (e: Exception) {
-            Log.e("AdminRepository", "Error deleting Firestore user document for $uid: ${e.localizedMessage}", e)
-        }
-
-        // Cloud Function token revocation & Supabase deletion
         if (online) {
             try {
-                triggerRevokeUserTokensCloudFunction(uid)
-            } catch (e: Exception) {
-                Log.e("AdminRepository", "Token revocation trigger failed for UID $uid: ${e.localizedMessage}", e)
-            }
+                val authHeader = SupabaseClient.getBearerHeader()
+                val response = SupabaseClient.api.deleteUserAdminEndpoint(
+                    apiKey = SupabaseClient.API_KEY,
+                    authHeader = authHeader,
+                    body = DeleteUserAdminRequest(employeeId = cleanUid)
+                )
 
-            try {
-                val bearer = SupabaseClient.getBearerHeader()
-                SupabaseClient.api.deleteProfile(
-                    apiKey = SupabaseClient.API_KEY,
-                    authHeader = bearer,
-                    idFilter = "eq.$uid"
-                )
-                SupabaseClient.api.deleteUserRole(
-                    apiKey = SupabaseClient.API_KEY,
-                    authHeader = bearer,
-                    userIdFilter = "eq.$uid"
-                )
-                Log.d("AdminRepository", "Supabase profile and user roles deleted for $uid")
+                if (!response.isSuccessful) {
+                    val errorMsg = "Admin deleteUser endpoint returned HTTP ${response.code()}"
+                    Log.e("AdminRepository", errorMsg)
+                    return Result.failure(Exception(errorMsg))
+                }
+
+                Log.d("AdminRepository", "Server response succeeded for deleteUser employee_id $cleanUid")
             } catch (e: Exception) {
-                Log.e("AdminRepository", "Error deleting Supabase profile/role for $uid: ${e.localizedMessage}", e)
+                Log.e("AdminRepository", "Error during deleteUser for $cleanUid: ${e.localizedMessage}", e)
+                return Result.failure(e)
             }
+        }
+
+        // Delete linked Firestore document if present
+        try {
+            firestore.collection("users").document(cleanUid).delete().await()
+            Log.d("AdminRepository", "Firestore document deleted for UID $cleanUid")
+        } catch (e: Exception) {
+            Log.w("AdminRepository", "Firestore cleanup note for $cleanUid: ${e.localizedMessage}")
+        }
+
+        // Remove local Room DB entry
+        try {
+            database.employeeDao().deleteEmployeeById(cleanUid)
+            Log.d("AdminRepository", "Deleted employee $cleanUid from local Room database.")
+        } catch (e: Exception) {
+            Log.e("AdminRepository", "Failed deleting local database employee $cleanUid: ${e.localizedMessage}", e)
         }
 
         return Result.success(true)
-    }
-
-    private fun triggerRevokeUserTokensCloudFunction(uid: String) {
-        try {
-            val bearer = SupabaseClient.getBearerHeader()
-            val client = OkHttpClient()
-            val jsonMediaType = "application/json; charset=utf-8".toMediaTypeOrNull()
-            val requestBody = RequestBody.create(jsonMediaType, "{\"user_id\":\"$uid\",\"action\":\"revoke_refresh_tokens\"}")
-            val request = Request.Builder()
-                .url("https://project--5e9b81ad-6c63-4331-af7a-01008019e17f.lovable.app/api/public/revoke-user-tokens")
-                .addHeader("Authorization", bearer)
-                .addHeader("apikey", SupabaseClient.API_KEY)
-                .post(requestBody)
-                .build()
-
-            client.newCall(request).enqueue(object : okhttp3.Callback {
-                override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {
-                    Log.e("AdminRepository", "Cloud function token revocation callback failure for $uid: ${e.message}", e)
-                }
-
-                override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
-                    response.use {
-                        if (response.isSuccessful) {
-                            Log.d("AdminRepository", "Cloud function triggered token revocation successfully for UID $uid")
-                        } else {
-                            Log.w("AdminRepository", "Cloud function token revocation returned HTTP ${response.code} for $uid")
-                        }
-                    }
-                }
-            })
-        } catch (e: Exception) {
-            Log.e("AdminRepository", "Failed launching cloud function to revoke tokens for $uid: ${e.localizedMessage}", e)
-        }
     }
 }
