@@ -162,8 +162,8 @@ class DexcargoRepository(private val database: AppDatabase) {
         }
     }
 
-    suspend fun deleteEmployee(id: String, online: Boolean = true) {
-        adminRepository.deleteUser(id, online)
+    suspend fun deleteEmployee(id: String, online: Boolean = true): Result<Boolean> {
+        return adminRepository.deleteUser(id, online)
     }
 
     suspend fun getPackageById(id: String): CargoPackage? = database.cargoPackageDao().getPackageById(id)

@@ -343,8 +343,9 @@ fun ScanStickerScreen(viewModel: DexcargoViewModel) {
                                     onDismissRequest = { expandedRepDropdown = false },
                                     modifier = Modifier.background(DarkSurfaceVariant)
                                 ) {
-                                    if (employeesList.isNotEmpty()) {
-                                        employeesList.forEach { emp ->
+                                    val salesRepsList = employeesList.filter { it.role.lowercase() != "admin" && !it.id.startsWith("ADM") }
+                                    if (salesRepsList.isNotEmpty()) {
+                                        salesRepsList.forEach { emp ->
                                             DropdownMenuItem(
                                                 text = { Text("${emp.name} (${emp.role.uppercase()})", color = TextPrimary, fontSize = 12.sp) },
                                                 onClick = {
@@ -677,8 +678,9 @@ fun OcrReviewScreen(viewModel: DexcargoViewModel) {
                             onDismissRequest = { expandedRepDropdown = false },
                             modifier = Modifier.background(DarkSurfaceVariant)
                         ) {
-                            if (employeesList.isNotEmpty()) {
-                                employeesList.forEach { emp ->
+                            val salesRepsList = employeesList.filter { it.role.lowercase() != "admin" && !it.id.startsWith("ADM") }
+                            if (salesRepsList.isNotEmpty()) {
+                                salesRepsList.forEach { emp ->
                                     DropdownMenuItem(
                                         text = { Text("${emp.name} (${emp.role.uppercase()})", color = TextPrimary, fontSize = 12.sp) },
                                         onClick = {

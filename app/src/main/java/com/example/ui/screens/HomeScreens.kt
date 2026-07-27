@@ -830,7 +830,7 @@ fun AdminHomeScreen(viewModel: DexcargoViewModel) {
             ) {
                 StatCard(
                     modifier = Modifier.weight(1f),
-                    num = employeesList.count { it.isActive }.toString(),
+                    num = employeesList.count { it.isActive && it.role.lowercase() != "admin" && !it.id.startsWith("ADM") }.toString(),
                     label = "Active Employees",
                     icon = "👥",
                     color = OrangeAccent
@@ -1017,7 +1017,7 @@ fun AdminHomeScreen(viewModel: DexcargoViewModel) {
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     // List
-                    employeesList.forEach { emp ->
+                    employeesList.filter { it.role.lowercase() != "admin" && !it.id.startsWith("ADM") }.forEach { emp ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -1189,7 +1189,11 @@ fun AdminHomeScreen(viewModel: DexcargoViewModel) {
                         }
 
                         Button(
-                            onClick = { viewModel.registerNewEmployee() },
+                            onClick = {
+                                viewModel.registerNewEmployee { _, msg ->
+                                    Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                                }
+                            },
                             colors = ButtonDefaults.buttonColors(containerColor = PurpleAccent),
                             shape = RoundedCornerShape(8.dp),
                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
@@ -1214,8 +1218,9 @@ fun AdminHomeScreen(viewModel: DexcargoViewModel) {
                     .padding(12.dp)
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (employeesList.isNotEmpty()) {
-                        employeesList.forEach { emp ->
+                    val staffList = employeesList.filter { it.role.lowercase() != "admin" && !it.id.startsWith("ADM") }
+                    if (staffList.isNotEmpty()) {
+                        staffList.forEach { emp ->
                             val color = when (emp.role) {
                                 "lm" -> BlueAccent
                                 "sm" -> GreenAccent

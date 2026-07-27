@@ -4,6 +4,7 @@ import com.example.data.*
 import com.squareup.moshi.Json
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
+import android.util.Log
 import okhttp3.OkHttpClient
 import okhttp3.RequestBody
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
@@ -294,12 +295,53 @@ data class StkPushResponse(
 )
 
 interface MpesaApi {
+    @GET("api/admin/employees")
+    suspend fun getAdminEmployees(
+        @Header("apikey") apiKey: String = SupabaseClient.API_KEY,
+        @Header("Authorization") authHeader: String
+    ): Response<EmployeeListAdminResponse>
+
+    @POST("api/admin/employees")
+    suspend fun createEmployeeAdmin(
+        @Header("apikey") apiKey: String = SupabaseClient.API_KEY,
+        @Header("Authorization") authHeader: String,
+        @Body body: CreateEmployeeAdminRequest
+    ): Response<Map<String, Any?>>
+
+    @PATCH("api/admin/employees")
+    suspend fun updateEmployeeStatusAdmin(
+        @Header("apikey") apiKey: String = SupabaseClient.API_KEY,
+        @Header("Authorization") authHeader: String,
+        @Body body: UpdateEmployeeStatusAdminRequest
+    ): Response<Map<String, Any?>>
+
+    @POST("api/admin/delete-user")
+    suspend fun deleteUserAdminEndpoint(
+        @Header("apikey") apiKey: String = SupabaseClient.API_KEY,
+        @Header("Authorization") authHeader: String,
+        @Body body: DeleteUserAdminRequest
+    ): Response<Map<String, Any?>>
+
     @POST("api/mpesa-stk-push")
     suspend fun stkPush(
         @Header("apikey") apiKey: String = SupabaseClient.API_KEY,
         @Header("Authorization") authHeader: String,
         @Body req: StkPushRequest
     ): Response<StkPushResponse>
+
+    @POST("api/public/gemini-ocr")
+    suspend fun geminiOcr(
+        @Header("apikey") apiKey: String = SupabaseClient.API_KEY,
+        @Header("Authorization") authHeader: String,
+        @Body req: Map<String, String>
+    ): Response<Map<String, Any?>>
+
+    @POST("api/public/send-sms")
+    suspend fun sendSms(
+        @Header("apikey") apiKey: String = SupabaseClient.API_KEY,
+        @Header("Authorization") authHeader: String,
+        @Body req: Map<String, String>
+    ): Response<Map<String, Any?>>
 
     @POST
     suspend fun stkPushDynamic(
@@ -398,6 +440,50 @@ interface SupabaseApi {
         @Header("Authorization") authHeader: String,
         @Query("id") idFilter: String
     ): Response<Unit>
+
+    @DELETE("rest/v1/employees")
+    suspend fun deleteEmployeeRest(
+        @Header("apikey") apiKey: String = SupabaseClient.API_KEY,
+        @Header("Authorization") authHeader: String = SupabaseClient.getBearerHeader(),
+        @Query("id") idFilter: String
+    ): Response<Unit>
+
+    @DELETE("rest/v1/employees")
+    suspend fun deleteEmployeeRestByEmail(
+        @Header("apikey") apiKey: String = SupabaseClient.SERVICE_ROLE_KEY,
+        @Header("Authorization") authHeader: String = SupabaseClient.getServiceRoleBearerHeader(),
+        @Query("email") emailFilter: String
+    ): Response<Unit>
+
+    @DELETE("rest/v1/profiles")
+    suspend fun deleteProfileByEmail(
+        @Header("apikey") apiKey: String = SupabaseClient.SERVICE_ROLE_KEY,
+        @Header("Authorization") authHeader: String = SupabaseClient.getServiceRoleBearerHeader(),
+        @Query("email") emailFilter: String
+    ): Response<Unit>
+
+    @POST("rest/v1/employees")
+    suspend fun insertEmployeeRest(
+        @Header("apikey") apiKey: String = SupabaseClient.SERVICE_ROLE_KEY,
+        @Header("Authorization") authHeader: String = SupabaseClient.getServiceRoleBearerHeader(),
+        @Header("Prefer") prefer: String = "resolution=merge-duplicates",
+        @Body body: Map<String, @JvmSuppressWildcards Any?>
+    ): Response<Unit>
+
+    @POST("rest/v1/user_roles")
+    suspend fun insertUserRoleRest(
+        @Header("apikey") apiKey: String = SupabaseClient.SERVICE_ROLE_KEY,
+        @Header("Authorization") authHeader: String = SupabaseClient.getServiceRoleBearerHeader(),
+        @Header("Prefer") prefer: String = "resolution=merge-duplicates",
+        @Body body: Map<String, @JvmSuppressWildcards Any?>
+    ): Response<Unit>
+
+    @POST("auth/v1/admin/users")
+    suspend fun createAuthUserAdmin(
+        @Header("apikey") apiKey: String = SupabaseClient.SERVICE_ROLE_KEY,
+        @Header("Authorization") authHeader: String = SupabaseClient.getServiceRoleBearerHeader(),
+        @Body body: Map<String, @JvmSuppressWildcards Any?>
+    ): Response<Map<String, Any?>>
 
     @DELETE("rest/v1/user_roles")
     suspend fun deleteUserRole(
@@ -892,6 +978,43 @@ object SupabaseClient {
 
             response
         }
+        .addInterceptor { chain ->
+            val request = chain.request()
+            val url = request.url.toString()
+            val isBackend = url.contains("lovable.app") || url.contains("/api/")
+
+            if (isBackend) {
+                val reqBodyStr = try {
+                    val buffer = okio.Buffer()
+                    request.body?.writeTo(buffer)
+                    buffer.readUtf8()
+                } catch (e: Exception) {
+                    "[Error reading request body: ${e.message}]"
+                }
+                Log.d("BACKEND_HTTP", "===> HTTP ${request.method} $url\nHeaders: ${request.headers}\nBody: $reqBodyStr")
+            }
+
+            val response = chain.proceed(request)
+
+            if (isBackend) {
+                val responseBodyStr = try {
+                    val source = response.body?.source()
+                    source?.request(Long.MAX_VALUE)
+                    val buffer = source?.buffer
+                    buffer?.clone()?.readUtf8() ?: "[Empty body]"
+                } catch (e: Exception) {
+                    "[Error reading response body: ${e.message}]"
+                }
+                val logMsg = "<=== HTTP ${response.code} ${response.message} $url\nHeaders: ${response.headers}\nResponse Body: $responseBodyStr"
+                if (response.isSuccessful) {
+                    Log.d("BACKEND_HTTP", logMsg)
+                } else {
+                    Log.e("BACKEND_HTTP", logMsg)
+                }
+            }
+
+            response
+        }
         .addInterceptor(HttpLoggingInterceptor().apply {
             level = HttpLoggingInterceptor.Level.BODY
         })
@@ -911,7 +1034,8 @@ object SupabaseClient {
         .addConverterFactory(MoshiConverterFactory.create(moshi))
         .build()
 
-    val mpesaApi: MpesaApi = mpesaRetrofit.create(MpesaApi::class.java)
+    val backendApi: MpesaApi = mpesaRetrofit.create(MpesaApi::class.java)
+    val mpesaApi: MpesaApi = backendApi
 
     fun getBearerHeader(): String {
         val token = accessToken

@@ -447,7 +447,7 @@ fun CommissionsScreen(viewModel: DexcargoViewModel) {
                             dropdownExpanded = false
                         }
                     )
-                    employees.forEach { emp ->
+                    employees.filter { it.role.lowercase() != "admin" && !it.id.startsWith("ADM") }.forEach { emp ->
                         DropdownMenuItem(
                             text = { Text(emp.name, color = TextPrimary, fontSize = 12.sp) },
                             onClick = {

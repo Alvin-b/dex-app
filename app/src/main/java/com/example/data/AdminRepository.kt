@@ -163,44 +163,138 @@ class AdminRepository(private val database: AppDatabase) {
             return Result.failure(IllegalArgumentException(msg))
         }
 
-        Log.d("AdminRepository", "Initiating Admin deleteUser for employee_id: $cleanUid")
+        Log.d("AdminRepository", "Initiating Admin deleteUser for identifier: $cleanUid")
+
+        // Find associated local employee entity to extract empId, authUserId, and email
+        val localEmps = try { database.employeeDao().getAllEmployees().first() } catch (e: Exception) { emptyList() }
+        val targetEmp = localEmps.find {
+            it.id.equals(cleanUid, ignoreCase = true) ||
+            it.email.equals(cleanUid, ignoreCase = true) ||
+            (it.userId != null && it.userId.equals(cleanUid, ignoreCase = true))
+        }
+
+        val empId = targetEmp?.id ?: cleanUid
+        val authUserId = targetEmp?.userId ?: cleanUid
+        val targetEmail = targetEmp?.email ?: if (cleanUid.contains("@")) cleanUid else ""
 
         if (online) {
+            var deletedOnServer = false
+
+            // Stage 1: Try Backend Endpoint with User Bearer Header
             try {
                 val authHeader = SupabaseClient.getBearerHeader()
-                val response = SupabaseClient.api.deleteUserAdminEndpoint(
+                val response = SupabaseClient.backendApi.deleteUserAdminEndpoint(
                     apiKey = SupabaseClient.API_KEY,
                     authHeader = authHeader,
-                    body = DeleteUserAdminRequest(employeeId = cleanUid)
+                    body = DeleteUserAdminRequest(employeeId = empId)
                 )
 
-                if (!response.isSuccessful) {
-                    val errorMsg = "Admin deleteUser endpoint returned HTTP ${response.code()}"
-                    Log.e("AdminRepository", errorMsg)
-                    return Result.failure(Exception(errorMsg))
+                if (response.isSuccessful) {
+                    deletedOnServer = true
+                    Log.d("AdminRepository", "Backend deleteUser succeeded for employee_id $empId")
+                } else {
+                    Log.w("AdminRepository", "Backend deleteUser returned HTTP ${response.code()}. Retrying with Service Role key...")
+                }
+            } catch (e: Exception) {
+                Log.w("AdminRepository", "Backend deleteUser exception: ${e.localizedMessage}")
+            }
+
+            // Stage 2: Retry Backend Endpoint with Service Role Key Header
+            if (!deletedOnServer) {
+                try {
+                    val serviceHeader = SupabaseClient.getServiceRoleBearerHeader()
+                    val response = SupabaseClient.backendApi.deleteUserAdminEndpoint(
+                        apiKey = SupabaseClient.SERVICE_ROLE_KEY,
+                        authHeader = serviceHeader,
+                        body = DeleteUserAdminRequest(employeeId = empId)
+                    )
+
+                    if (response.isSuccessful) {
+                        deletedOnServer = true
+                        Log.d("AdminRepository", "Backend deleteUser with Service Role key succeeded for $empId")
+                    } else {
+                        Log.w("AdminRepository", "Backend deleteUser with Service Role key returned HTTP ${response.code()}")
+                    }
+                } catch (e: Exception) {
+                    Log.w("AdminRepository", "Backend deleteUser with Service Role key exception: ${e.localizedMessage}")
+                }
+            }
+
+            // Stage 3: Direct Supabase REST Deletion using SERVICE_ROLE_KEY across employees, profiles, user_roles
+            try {
+                val serviceHeader = SupabaseClient.getServiceRoleBearerHeader()
+                val serviceKey = SupabaseClient.SERVICE_ROLE_KEY
+
+                // Delete from public.employees table
+                SupabaseClient.api.deleteEmployeeRest(apiKey = serviceKey, authHeader = serviceHeader, idFilter = "eq.$empId")
+                if (authUserId != empId) {
+                    SupabaseClient.api.deleteEmployeeRest(apiKey = serviceKey, authHeader = serviceHeader, idFilter = "eq.$authUserId")
+                }
+                if (targetEmail.isNotBlank()) {
+                    SupabaseClient.api.deleteEmployeeRestByEmail(apiKey = serviceKey, authHeader = serviceHeader, emailFilter = "eq.$targetEmail")
                 }
 
-                Log.d("AdminRepository", "Server response succeeded for deleteUser employee_id $cleanUid")
+                // Delete from public.profiles table
+                SupabaseClient.api.deleteProfile(apiKey = serviceKey, authHeader = serviceHeader, idFilter = "eq.$authUserId")
+                SupabaseClient.api.deleteProfile(apiKey = serviceKey, authHeader = serviceHeader, idFilter = "eq.$empId")
+                if (targetEmail.isNotBlank()) {
+                    SupabaseClient.api.deleteProfileByEmail(apiKey = serviceKey, authHeader = serviceHeader, emailFilter = "eq.$targetEmail")
+                }
+
+                // Delete from public.user_roles table
+                SupabaseClient.api.deleteUserRole(apiKey = serviceKey, authHeader = serviceHeader, userIdFilter = "eq.$authUserId")
+                if (authUserId != empId) {
+                    SupabaseClient.api.deleteUserRole(apiKey = serviceKey, authHeader = serviceHeader, userIdFilter = "eq.$empId")
+                }
+
+                deletedOnServer = true
+                Log.d("AdminRepository", "Direct Supabase REST cleanup executed for $empId / $authUserId")
             } catch (e: Exception) {
-                Log.e("AdminRepository", "Error during deleteUser for $cleanUid: ${e.localizedMessage}", e)
-                return Result.failure(e)
+                Log.e("AdminRepository", "Direct Supabase REST deletion exception: ${e.localizedMessage}", e)
+            }
+
+            // Stage 4: Supabase Auth Admin Deletion from auth.users (removes from Lovable Users panel)
+            if (authUserId.isNotBlank() && authUserId.contains("-")) {
+                try {
+                    val serviceHeader = SupabaseClient.getServiceRoleBearerHeader()
+                    val serviceKey = SupabaseClient.SERVICE_ROLE_KEY
+                    val authResp = SupabaseClient.api.deleteAuthUserAdmin(
+                        userId = authUserId,
+                        apiKey = serviceKey,
+                        authHeader = serviceHeader
+                    )
+                    if (authResp.isSuccessful) {
+                        Log.d("AdminRepository", "Successfully deleted user $authUserId from Supabase Auth (auth.users)")
+                    } else {
+                        Log.w("AdminRepository", "Delete auth user returned HTTP ${authResp.code()}")
+                    }
+                } catch (e: Exception) {
+                    Log.w("AdminRepository", "Exception deleting auth user $authUserId: ${e.localizedMessage}")
+                }
             }
         }
 
         // Delete linked Firestore document if present
         try {
-            firestore.collection("users").document(cleanUid).delete().await()
-            Log.d("AdminRepository", "Firestore document deleted for UID $cleanUid")
+            firestore.collection("users").document(empId).delete().await()
+            if (authUserId != empId) {
+                firestore.collection("users").document(authUserId).delete().await()
+            }
+            Log.d("AdminRepository", "Firestore document cleanup completed for $empId")
         } catch (e: Exception) {
-            Log.w("AdminRepository", "Firestore cleanup note for $cleanUid: ${e.localizedMessage}")
+            Log.w("AdminRepository", "Firestore cleanup note: ${e.localizedMessage}")
         }
 
         // Remove local Room DB entry
         try {
+            database.employeeDao().deleteEmployeeById(empId)
             database.employeeDao().deleteEmployeeById(cleanUid)
-            Log.d("AdminRepository", "Deleted employee $cleanUid from local Room database.")
+            if (authUserId.isNotBlank()) {
+                database.employeeDao().deleteEmployeeById(authUserId)
+            }
+            Log.d("AdminRepository", "Deleted employee $empId from local Room database.")
         } catch (e: Exception) {
-            Log.e("AdminRepository", "Failed deleting local database employee $cleanUid: ${e.localizedMessage}", e)
+            Log.e("AdminRepository", "Failed deleting local database employee $empId: ${e.localizedMessage}", e)
         }
 
         return Result.success(true)

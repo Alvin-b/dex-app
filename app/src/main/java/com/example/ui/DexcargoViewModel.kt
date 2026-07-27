@@ -904,6 +904,16 @@ class DexcargoViewModel(
                     }
                 }
 
+                if (pkg.status.lowercase() != "awaiting_payment") {
+                    try {
+                        android.util.Log.d("MpesaSTK", "Pre-transitioning package ${pkg.id} status '${pkg.status}' to 'awaiting_payment'")
+                        val updatedPkg = pkg.copy(status = "awaiting_payment")
+                        repository.insertPackage(updatedPkg, online = isOnline.value)
+                    } catch (e: Exception) {
+                        android.util.Log.w("MpesaSTK", "Status transition exception: ${e.message}")
+                    }
+                }
+
                 val bearer = com.example.data.api.SupabaseClient.getBearerHeader()
                 val req = com.example.data.api.StkPushRequest(
                     phone = cleanPhone,
@@ -915,6 +925,7 @@ class DexcargoViewModel(
                 android.util.Log.d("MpesaSTK", "STK Push Payload: phone=$cleanPhone, amount=${req.amount}, trackingNumber=${req.trackingNumber}")
 
                 var response: retrofit2.Response<com.example.data.api.StkPushResponse>? = null
+                var lastErrorBodyStr = ""
                 var pushDispatched = false
                 var notificationId = ""
                 var customerMsg = ""
@@ -930,11 +941,9 @@ class DexcargoViewModel(
                         android.util.Log.d("MpesaSTK", "STK Push Attempt #$attempt to primary gateway...")
                         stkStatusMessage.value = if (attempt == 1) "Connecting to Safaricom Daraja STK gateway..." else "Retrying STK push (Attempt #$attempt)..."
                         
-                        val activeAuthHeader = if (attempt > 1 && response?.code() == 403) {
-                            "Bearer ${com.example.data.api.SupabaseClient.API_KEY}"
-                        } else bearer
+                        val activeAuthHeader = SupabaseClient.getBearerHeader()
 
-                        response = com.example.data.api.SupabaseClient.api.stkPush(
+                        response = com.example.data.api.SupabaseClient.backendApi.stkPush(
                             apiKey = com.example.data.api.SupabaseClient.API_KEY,
                             authHeader = activeAuthHeader,
                             req = req
@@ -948,8 +957,8 @@ class DexcargoViewModel(
                             android.util.Log.i("MpesaSTK", "STK push dispatched successfully! NotificationId: $notificationId, CheckoutRequestId: ${body.checkoutRequestId}")
                         } else {
                             val code = response.code()
-                            val errorBodyStr = response.errorBody()?.string() ?: ""
-                            android.util.Log.w("MpesaSTK", "Attempt #$attempt failed with HTTP status $code. Body: $errorBodyStr")
+                            lastErrorBodyStr = response.errorBody()?.string() ?: ""
+                            android.util.Log.w("MpesaSTK", "Attempt #$attempt failed with HTTP status $code. Body: $lastErrorBodyStr")
 
                             if (code in 400..499 && code != 408 && code != 403) {
                                 break
@@ -1067,8 +1076,8 @@ class DexcargoViewModel(
                     }
                 } else {
                     val code = response?.code() ?: 0
-                    val rawErr = response?.errorBody()?.string() ?: ""
-                    val parsedErr = parseJsonError(rawErr) ?: response?.message() ?: "Gateway unreachable"
+                    val rawErr = lastErrorBodyStr
+                    val parsedErr = parseJsonError(rawErr) ?: response?.message()?.ifBlank { null } ?: "Gateway unreachable"
                     android.util.Log.e("MpesaSTK", "STK Push failed permanently after retries. Code: $code, Error: $parsedErr")
 
                     stkStatusMessage.value = when (code) {
@@ -1432,9 +1441,11 @@ class DexcargoViewModel(
         }
     }
 
-    fun registerNewEmployee() {
+    fun registerNewEmployee(onComplete: ((Boolean, String) -> Unit)? = null) {
         if (empRegEmail.value.isBlank() || empRegPass.value.isBlank()) {
-            _syncStatusMessage.value = "Email and Initial Password are required to create a user."
+            val msg = "Email and Initial Password are required to create a user."
+            _syncStatusMessage.value = msg
+            onComplete?.invoke(false, msg)
             return
         }
         val email = empRegEmail.value.trim()
@@ -1452,34 +1463,162 @@ class DexcargoViewModel(
 
         viewModelScope.launch {
             if (isOnline.value) {
+                var creationSucceeded = false
+                var successMsg = ""
+                var lastErrDetail = ""
+
+                // Tier 1: Try backend API with User Bearer Header
                 try {
                     val authHeader = SupabaseClient.getBearerHeader()
-                    val resp = SupabaseClient.api.createEmployeeAdmin(
+                    val resp = SupabaseClient.backendApi.createEmployeeAdmin(
                         apiKey = SupabaseClient.API_KEY,
                         authHeader = authHeader,
                         body = CreateEmployeeAdminRequest(
                             fullName = name,
                             email = email,
                             password = pass,
-                            role = canonicalRole
+                            phone = "",
+                            role = canonicalRole,
+                            commissionPercentage = 0.0
                         )
                     )
                     if (resp.isSuccessful) {
-                        _syncStatusMessage.value = "User '$name' created successfully on server!"
-                        try {
-                            repository.syncAllFromBackend(true)
-                        } catch (e: Exception) {
-                            e.printStackTrace()
-                        }
+                        creationSucceeded = true
+                        successMsg = "User '$name' created successfully on server!"
                     } else {
-                        _syncStatusMessage.value = "Failed to create user on server (HTTP ${resp.code()})"
+                        val errBody = try { resp.errorBody()?.string() } catch(e: Exception) { null } ?: ""
+                        lastErrDetail = parseJsonError(errBody) ?: resp.message().ifBlank { null } ?: "HTTP ${resp.code()}"
+                        android.util.Log.w("RegisterEmployee", "Tier 1 returned ${resp.code()}: $lastErrDetail. Retrying with Service Role key...")
                     }
                 } catch (e: Exception) {
-                    e.printStackTrace()
-                    _syncStatusMessage.value = "Error creating user: ${e.localizedMessage}"
+                    lastErrDetail = e.localizedMessage ?: "Connection error"
+                    android.util.Log.w("RegisterEmployee", "Tier 1 exception: ${e.message}")
+                }
+
+                // Tier 2: Retry backend API with Service Role Key
+                if (!creationSucceeded) {
+                    try {
+                        val serviceHeader = SupabaseClient.getServiceRoleBearerHeader()
+                        val resp = SupabaseClient.backendApi.createEmployeeAdmin(
+                            apiKey = SupabaseClient.SERVICE_ROLE_KEY,
+                            authHeader = serviceHeader,
+                            body = CreateEmployeeAdminRequest(
+                                fullName = name,
+                                email = email,
+                                password = pass,
+                                phone = "",
+                                role = canonicalRole,
+                                commissionPercentage = 0.0
+                            )
+                        )
+                        if (resp.isSuccessful) {
+                            creationSucceeded = true
+                            successMsg = "User '$name' created successfully via Service Role!"
+                        } else {
+                            val errBody = try { resp.errorBody()?.string() } catch(e: Exception) { null } ?: ""
+                            val detail = parseJsonError(errBody) ?: resp.message().ifBlank { null } ?: "HTTP ${resp.code()}"
+                            if (detail.isNotBlank()) lastErrDetail = detail
+                            android.util.Log.w("RegisterEmployee", "Tier 2 returned ${resp.code()}: $detail. Trying direct Supabase Auth Admin creation...")
+                        }
+                    } catch (e: Exception) {
+                        android.util.Log.w("RegisterEmployee", "Tier 2 exception: ${e.message}")
+                    }
+                }
+
+                // Tier 3: Direct Supabase Auth Admin + REST Creation Fallback
+                if (!creationSucceeded) {
+                    try {
+                        val serviceHeader = SupabaseClient.getServiceRoleBearerHeader()
+                        val serviceKey = SupabaseClient.SERVICE_ROLE_KEY
+
+                        val authResp = SupabaseClient.api.createAuthUserAdmin(
+                            apiKey = serviceKey,
+                            authHeader = serviceHeader,
+                            body = mapOf(
+                                "email" to email,
+                                "password" to pass,
+                                "email_confirm" to true,
+                                "user_metadata" to mapOf(
+                                    "full_name" to name,
+                                    "role" to canonicalRole
+                                )
+                            )
+                        )
+
+                        val bodyMap = authResp.body()
+                        val newAuthUserId = bodyMap?.get("id")?.toString() ?: java.util.UUID.randomUUID().toString()
+
+                        if (authResp.isSuccessful || authResp.code() == 422 || authResp.code() == 400) {
+                            // Insert row into public.employees
+                            SupabaseClient.api.insertEmployeeRest(
+                                apiKey = serviceKey,
+                                authHeader = serviceHeader,
+                                body = mapOf(
+                                    "user_id" to newAuthUserId,
+                                    "full_name" to name,
+                                    "email" to email,
+                                    "role" to canonicalRole,
+                                    "is_active" to true,
+                                    "commission_percentage" to 0.0,
+                                    "phone" to ""
+                                )
+                            )
+
+                            // Insert row into public.profiles
+                            SupabaseClient.api.createProfile(
+                                apiKey = serviceKey,
+                                authHeader = serviceHeader,
+                                profile = com.example.data.api.ProfileResponse(
+                                    id = newAuthUserId,
+                                    fullName = name,
+                                    email = email,
+                                    role = canonicalRole
+                                )
+                            )
+
+                            // Insert row into public.user_roles
+                            SupabaseClient.api.insertUserRoleRest(
+                                apiKey = serviceKey,
+                                authHeader = serviceHeader,
+                                body = mapOf(
+                                    "user_id" to newAuthUserId,
+                                    "role" to canonicalRole
+                                )
+                            )
+
+                            creationSucceeded = true
+                            successMsg = "User '$name' registered successfully in Supabase Auth!"
+                        } else {
+                            val errBody = try { authResp.errorBody()?.string() } catch(e: Exception) { null } ?: ""
+                            val detail = parseJsonError(errBody) ?: authResp.message().ifBlank { null } ?: "HTTP ${authResp.code()}"
+                            lastErrDetail = detail
+                        }
+                    } catch (e: Exception) {
+                        lastErrDetail = e.localizedMessage ?: "Auth Admin fallback failed"
+                        android.util.Log.e("RegisterEmployee", "Tier 3 exception: ${e.message}", e)
+                    }
+                }
+
+                if (creationSucceeded) {
+                    _syncStatusMessage.value = successMsg
+                    empRegName.value = ""
+                    empRegEmail.value = ""
+                    empRegPass.value = ""
+                    try {
+                        repository.syncAllFromBackend(true)
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
+                    onComplete?.invoke(true, successMsg)
+                } else {
+                    val msg = "Failed to create user on server ($lastErrDetail)"
+                    _syncStatusMessage.value = msg
+                    onComplete?.invoke(false, msg)
                 }
             } else {
-                _syncStatusMessage.value = "Creating staff requires an online connection."
+                val msg = "Creating staff requires an online connection."
+                _syncStatusMessage.value = msg
+                onComplete?.invoke(false, msg)
             }
 
             val actor = currentEmployee.value?.id ?: "ADM-001"
@@ -1493,9 +1632,6 @@ class DexcargoViewModel(
                 ),
                 online = isOnline.value
             )
-            empRegName.value = ""
-            empRegEmail.value = ""
-            empRegPass.value = ""
         }
     }
 
@@ -1510,7 +1646,7 @@ class DexcargoViewModel(
             val newStatus = !match.isActive
             if (isOnline.value) {
                 try {
-                    val resp = SupabaseClient.api.updateEmployeeStatusAdmin(
+                    val resp = SupabaseClient.backendApi.updateEmployeeStatusAdmin(
                         apiKey = SupabaseClient.API_KEY,
                         authHeader = SupabaseClient.getBearerHeader(),
                         body = UpdateEmployeeStatusAdminRequest(employeeId = empId, isActive = newStatus)
@@ -1746,27 +1882,35 @@ class DexcargoViewModel(
             val match = list.find { it.id == empId }
             val empName = match?.name ?: empId
 
-            repository.deleteEmployee(empId, online = true)
+            val result = repository.deleteEmployee(empId, online = isOnline.value)
+            if (result.isSuccess) {
+                repository.insertLog(
+                    AuditLog(
+                        id = "AL-" + System.currentTimeMillis(),
+                        action = "DELETE_EMPLOYEE",
+                        actor = "${_currentEmployee.value?.id ?: "ADM-001"} (${_currentEmployee.value?.name ?: "Administrator"})",
+                        timestamp = getNowTimestamp(),
+                        details = "Deleted staff user account $empName ($empId)"
+                    ),
+                    online = isOnline.value
+                )
 
-            repository.insertLog(
-                AuditLog(
-                    id = "AL-" + System.currentTimeMillis(),
-                    action = "DELETE_EMPLOYEE",
-                    actor = "${_currentEmployee.value?.id ?: "ADM-001"} (${_currentEmployee.value?.name ?: "Administrator"})",
-                    timestamp = getNowTimestamp(),
-                    details = "Deleted user account $empName ($empId) from local database, Supabase and Firestore."
-                ),
-                online = isOnline.value
-            )
+                if (quickAccessEmployee.value?.id == empId) {
+                    quickAccessEmployee.value = null
+                }
 
-            if (_currentEmployee.value?.id == empId) {
-                logout()
+                try {
+                    repository.syncAllFromBackend(true)
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+
+                onComplete?.invoke(true, "User account '$empName' ($empId) has been permanently deleted.")
+            } else {
+                val error = result.exceptionOrNull()?.localizedMessage ?: "Failed to delete user account on server."
+                _syncStatusMessage.value = error
+                onComplete?.invoke(false, error)
             }
-            if (quickAccessEmployee.value?.id == empId) {
-                quickAccessEmployee.value = null
-            }
-
-            onComplete?.invoke(true, "User account '$empName' ($empId) has been permanently deleted from database.")
         }
     }
 
