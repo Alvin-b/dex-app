@@ -66,8 +66,8 @@ fun LoginScreen(viewModel: DexcargoViewModel) {
                     .border(1.5.dp, DarkBorder, RoundedCornerShape(22.dp))
                     .padding(horizontal = 20.dp, vertical = 22.dp)
             ) {
-                androidx.compose.foundation.Image(
-                    painter = androidx.compose.ui.res.painterResource(id = com.example.R.drawable.dex_brand_logo),
+                coil.compose.AsyncImage(
+                    model = com.example.R.drawable.dex_brand_logo,
                     contentDescription = "DEX Logistics Real Company Branding Logo",
                     modifier = Modifier
                         .height(130.dp)

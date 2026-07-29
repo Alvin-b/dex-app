@@ -1100,12 +1100,13 @@ class DexcargoViewModel(
         }
     }
 
-    private fun parseJsonError(jsonStr: String): String? {
-        if (jsonStr.isBlank()) return null
+    private fun parseJsonError(jsonStr: String?): String? {
+        if (jsonStr.isNullOrBlank()) return null
         return try {
             val jsonObj = org.json.JSONObject(jsonStr)
             jsonObj.optString("error").takeIf { it.isNotBlank() }
                 ?: jsonObj.optString("message").takeIf { it.isNotBlank() }
+                ?: jsonObj.optString("msg").takeIf { it.isNotBlank() }
                 ?: jsonObj.optString("customer_message").takeIf { it.isNotBlank() }
                 ?: jsonObj.optString("error_description").takeIf { it.isNotBlank() }
         } catch (e: Exception) {
@@ -1467,93 +1468,117 @@ class DexcargoViewModel(
                 var successMsg = ""
                 var lastErrDetail = ""
 
-                // Tier 1: Try backend API with User Bearer Header
+                val bearerHeader = SupabaseClient.getBearerHeader()
+                val activeApiKey = SupabaseClient.API_KEY
+
                 try {
-                    val authHeader = SupabaseClient.getBearerHeader()
-                    val resp = SupabaseClient.backendApi.createEmployeeAdmin(
-                        apiKey = SupabaseClient.API_KEY,
-                        authHeader = authHeader,
-                        body = CreateEmployeeAdminRequest(
-                            fullName = name,
-                            email = email,
-                            password = pass,
-                            phone = "",
-                            role = canonicalRole,
-                            commissionPercentage = 0.0
+                    var newAuthUserId: String? = null
+
+                    // 1. First Attempt: Call Supabase Auth Signup API (/auth/v1/signup)
+                    val signupReq = com.example.data.api.SignupRequest(
+                        email = email,
+                        password = pass,
+                        data = mapOf(
+                            "full_name" to name,
+                            "name" to name,
+                            "role" to canonicalRole
                         )
                     )
-                    if (resp.isSuccessful) {
-                        creationSucceeded = true
-                        successMsg = "User '$name' created successfully on server!"
-                    } else {
-                        val errBody = try { resp.errorBody()?.string() } catch(e: Exception) { null } ?: ""
-                        lastErrDetail = parseJsonError(errBody) ?: resp.message().ifBlank { null } ?: "HTTP ${resp.code()}"
-                        android.util.Log.w("RegisterEmployee", "Tier 1 returned ${resp.code()}: $lastErrDetail. Retrying with Service Role key...")
+                    val signupResp = try {
+                        SupabaseClient.api.signup(
+                            apiKey = activeApiKey,
+                            authHeader = null,
+                            request = signupReq
+                        )
+                    } catch (e: Exception) {
+                        null
                     }
-                } catch (e: Exception) {
-                    lastErrDetail = e.localizedMessage ?: "Connection error"
-                    android.util.Log.w("RegisterEmployee", "Tier 1 exception: ${e.message}")
-                }
 
-                // Tier 2: Retry backend API with Service Role Key
-                if (!creationSucceeded) {
-                    try {
-                        val serviceHeader = SupabaseClient.getServiceRoleBearerHeader()
-                        val resp = SupabaseClient.backendApi.createEmployeeAdmin(
-                            apiKey = SupabaseClient.SERVICE_ROLE_KEY,
-                            authHeader = serviceHeader,
-                            body = CreateEmployeeAdminRequest(
+                    if (signupResp != null && signupResp.isSuccessful) {
+                        val signupBody = signupResp.body()
+                        newAuthUserId = signupBody?.user?.id ?: signupBody?.id
+                        android.util.Log.d("RegisterEmployee", "Supabase signup succeeded. Auth UUID: $newAuthUserId")
+                    } else {
+                        val signupErrBody = try { signupResp?.errorBody()?.string() } catch (e: Exception) { null }
+                        val parsedSignupErr = parseJsonError(signupErrBody)
+                        if (!parsedSignupErr.isNullOrBlank()) {
+                            lastErrDetail = parsedSignupErr
+                        }
+
+                        // 2. Second Attempt: Try Admin Auth API (/auth/v1/admin/users)
+                        val adminAuthResp = try {
+                            SupabaseClient.api.createAuthUserAdmin(
+                                apiKey = activeApiKey,
+                                authHeader = bearerHeader,
+                                body = mapOf(
+                                    "email" to email,
+                                    "password" to pass,
+                                    "email_confirm" to true,
+                                    "user_metadata" to mapOf(
+                                        "full_name" to name,
+                                        "name" to name,
+                                        "role" to canonicalRole
+                                    )
+                                )
+                            )
+                        } catch (e: Exception) {
+                            null
+                        }
+
+                        if (adminAuthResp != null && adminAuthResp.isSuccessful) {
+                            val bodyMap = adminAuthResp.body()
+                            newAuthUserId = bodyMap?.get("id")?.toString() ?: bodyMap?.get("user_id")?.toString()
+                            android.util.Log.d("RegisterEmployee", "Supabase createAuthUserAdmin succeeded. Auth UUID: $newAuthUserId")
+                        } else {
+                            // 3. Third Attempt: Try Backend Admin API (/api/admin/employees)
+                            val adminReq = com.example.data.api.CreateEmployeeAdminRequest(
                                 fullName = name,
                                 email = email,
                                 password = pass,
                                 phone = "",
-                                role = canonicalRole,
-                                commissionPercentage = 0.0
+                                role = canonicalRole
                             )
-                        )
-                        if (resp.isSuccessful) {
-                            creationSucceeded = true
-                            successMsg = "User '$name' created successfully via Service Role!"
-                        } else {
-                            val errBody = try { resp.errorBody()?.string() } catch(e: Exception) { null } ?: ""
-                            val detail = parseJsonError(errBody) ?: resp.message().ifBlank { null } ?: "HTTP ${resp.code()}"
-                            if (detail.isNotBlank()) lastErrDetail = detail
-                            android.util.Log.w("RegisterEmployee", "Tier 2 returned ${resp.code()}: $detail. Trying direct Supabase Auth Admin creation...")
-                        }
-                    } catch (e: Exception) {
-                        android.util.Log.w("RegisterEmployee", "Tier 2 exception: ${e.message}")
-                    }
-                }
-
-                // Tier 3: Direct Supabase Auth Admin + REST Creation Fallback
-                if (!creationSucceeded) {
-                    try {
-                        val serviceHeader = SupabaseClient.getServiceRoleBearerHeader()
-                        val serviceKey = SupabaseClient.SERVICE_ROLE_KEY
-
-                        val authResp = SupabaseClient.api.createAuthUserAdmin(
-                            apiKey = serviceKey,
-                            authHeader = serviceHeader,
-                            body = mapOf(
-                                "email" to email,
-                                "password" to pass,
-                                "email_confirm" to true,
-                                "user_metadata" to mapOf(
-                                    "full_name" to name,
-                                    "role" to canonicalRole
+                            val adminResp = try {
+                                SupabaseClient.backendApi.createEmployeeAdmin(
+                                    apiKey = activeApiKey,
+                                    authHeader = bearerHeader,
+                                    body = adminReq
                                 )
+                            } catch (e: Exception) {
+                                null
+                            }
+
+                            if (adminResp != null && adminResp.isSuccessful) {
+                                val bodyMap = adminResp.body()
+                                newAuthUserId = bodyMap?.get("user_id")?.toString()
+                                    ?: bodyMap?.get("id")?.toString()
+                                    ?: bodyMap?.get("employee_code")?.toString()
+                            }
+                        }
+                    }
+
+                    // 4. Fallback check: If user already exists in auth.users, resolve existing profile UUID by email
+                    if (newAuthUserId.isNullOrBlank()) {
+                        val existingProfiles = try {
+                            SupabaseClient.api.getProfileByEmail(
+                                apiKey = activeApiKey,
+                                authHeader = bearerHeader,
+                                emailFilter = "eq.$email"
                             )
-                        )
+                        } catch (e: Exception) { emptyList() }
 
-                        val bodyMap = authResp.body()
-                        val newAuthUserId = bodyMap?.get("id")?.toString() ?: java.util.UUID.randomUUID().toString()
+                        newAuthUserId = existingProfiles.firstOrNull()?.id
+                    }
 
-                        if (authResp.isSuccessful || authResp.code() == 422 || authResp.code() == 400) {
-                            // Insert row into public.employees
+                    // CRITICAL: Only proceed if we obtained a REAL server user ID!
+                    if (!newAuthUserId.isNullOrBlank()) {
+                        // Insert/upsert into public.employees table
+                        try {
                             SupabaseClient.api.insertEmployeeRest(
-                                apiKey = serviceKey,
-                                authHeader = serviceHeader,
+                                apiKey = activeApiKey,
+                                authHeader = bearerHeader,
                                 body = mapOf(
+                                    "id" to newAuthUserId,
                                     "user_id" to newAuthUserId,
                                     "full_name" to name,
                                     "email" to email,
@@ -1563,40 +1588,62 @@ class DexcargoViewModel(
                                     "phone" to ""
                                 )
                             )
+                        } catch (e: Exception) { e.printStackTrace() }
 
-                            // Insert row into public.profiles
+                        // Insert/upsert into public.profiles table
+                        try {
                             SupabaseClient.api.createProfile(
-                                apiKey = serviceKey,
-                                authHeader = serviceHeader,
+                                apiKey = activeApiKey,
+                                authHeader = bearerHeader,
                                 profile = com.example.data.api.ProfileResponse(
                                     id = newAuthUserId,
-                                    fullName = name,
+                                    name = name,
                                     email = email,
-                                    role = canonicalRole
+                                    isActive = true
                                 )
                             )
+                        } catch (e: Exception) { e.printStackTrace() }
 
-                            // Insert row into public.user_roles
+                        // Insert/upsert into public.user_roles table
+                        try {
                             SupabaseClient.api.insertUserRoleRest(
-                                apiKey = serviceKey,
-                                authHeader = serviceHeader,
+                                apiKey = activeApiKey,
+                                authHeader = bearerHeader,
                                 body = mapOf(
                                     "user_id" to newAuthUserId,
                                     "role" to canonicalRole
                                 )
                             )
+                        } catch (e: Exception) { e.printStackTrace() }
 
-                            creationSucceeded = true
-                            successMsg = "User '$name' registered successfully in Supabase Auth!"
-                        } else {
-                            val errBody = try { authResp.errorBody()?.string() } catch(e: Exception) { null } ?: ""
-                            val detail = parseJsonError(errBody) ?: authResp.message().ifBlank { null } ?: "HTTP ${authResp.code()}"
-                            lastErrDetail = detail
+                        // Save to local Room DB Employee table so UI updates instantly
+                        val localRole = when (canonicalRole.lowercase()) {
+                            "admin" -> "admin"
+                            "sales_manager", "sm" -> "sm"
+                            "logistics_manager", "lm" -> "lm"
+                            else -> "sr"
                         }
-                    } catch (e: Exception) {
-                        lastErrDetail = e.localizedMessage ?: "Auth Admin fallback failed"
-                        android.util.Log.e("RegisterEmployee", "Tier 3 exception: ${e.message}", e)
+                        val newEmpEntity = Employee(
+                            id = newAuthUserId,
+                            name = name,
+                            email = email,
+                            password = pass,
+                            role = localRole,
+                            isActive = true
+                        )
+                        repository.insertEmployee(newEmpEntity, online = true)
+
+                        creationSucceeded = true
+                        successMsg = "User '$name' ($email) registered successfully on server!"
+                    } else {
+                        creationSucceeded = false
+                        if (lastErrDetail.isBlank()) {
+                            lastErrDetail = "Server auth user could not be created."
+                        }
                     }
+                } catch (e: Exception) {
+                    lastErrDetail = e.localizedMessage ?: "Connection error"
+                    android.util.Log.e("RegisterEmployee", "User creation error: ${e.message}", e)
                 }
 
                 if (creationSucceeded) {
@@ -1611,9 +1658,9 @@ class DexcargoViewModel(
                     }
                     onComplete?.invoke(true, successMsg)
                 } else {
-                    val msg = "Failed to create user on server ($lastErrDetail)"
-                    _syncStatusMessage.value = msg
-                    onComplete?.invoke(false, msg)
+                    val fullErr = if (lastErrDetail.isNotBlank()) "Failed to create user on server ($lastErrDetail)" else "Failed to create user on server."
+                    _syncStatusMessage.value = fullErr
+                    onComplete?.invoke(false, fullErr)
                 }
             } else {
                 val msg = "Creating staff requires an online connection."

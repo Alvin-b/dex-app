@@ -370,7 +370,7 @@ interface SupabaseApi {
     @POST("auth/v1/signup")
     suspend fun signup(
         @Header("apikey") apiKey: String,
-        @Header("Authorization") authHeader: String,
+        @Header("Authorization") authHeader: String? = null,
         @Body request: SignupRequest
     ): Response<SignupResponse>
 
@@ -387,6 +387,22 @@ interface SupabaseApi {
         @Query("id") idFilter: String,
         @Query("select") select: String = "*"
     ): List<ProfileResponse>
+
+    @GET("rest/v1/profiles")
+    suspend fun getProfileByEmail(
+        @Header("apikey") apiKey: String = SupabaseClient.SERVICE_ROLE_KEY,
+        @Header("Authorization") authHeader: String = SupabaseClient.getServiceRoleBearerHeader(),
+        @Query("email") emailFilter: String,
+        @Query("select") select: String = "*"
+    ): List<ProfileResponse>
+
+    @GET("rest/v1/employees")
+    suspend fun getEmployeeByEmail(
+        @Header("apikey") apiKey: String = SupabaseClient.SERVICE_ROLE_KEY,
+        @Header("Authorization") authHeader: String = SupabaseClient.getServiceRoleBearerHeader(),
+        @Query("email") emailFilter: String,
+        @Query("select") select: String = "*"
+    ): List<EmployeeApi>
 
     @GET("rest/v1/profiles")
     suspend fun getAllProfiles(
@@ -846,9 +862,9 @@ interface SupabaseApi {
 object SupabaseClient {
     const val BASE_URL = "https://bxbpuqzrbvkfrmwohqwd.supabase.co/"
     const val API_KEY = "sb_publishable_2aAwawQ3-zBwZTu3lE6n6Q__-g2fWsN"
-    const val SERVICE_ROLE_KEY = "sb_service_role_2aAwawQ3-zBwZTu3lE6n6Q__-g2fWsN"
+    const val SERVICE_ROLE_KEY = API_KEY
 
-    fun getServiceRoleBearerHeader(): String = "Bearer $SERVICE_ROLE_KEY"
+    fun getServiceRoleBearerHeader(): String = getBearerHeader()
 
     private val moshi: Moshi = Moshi.Builder()
         .addLast(KotlinJsonAdapterFactory())

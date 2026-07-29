@@ -1280,8 +1280,8 @@ fun EmployeeProfileBar(
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             modifier = Modifier.weight(1f)
         ) {
-            androidx.compose.foundation.Image(
-                painter = androidx.compose.ui.res.painterResource(id = com.example.R.drawable.dex_brand_logo),
+            coil.compose.AsyncImage(
+                model = com.example.R.drawable.dex_brand_logo,
                 contentDescription = "DEX Brand Logo",
                 modifier = Modifier
                     .size(38.dp)
