@@ -43,6 +43,15 @@ class MainActivity : FragmentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
+        // Safely attempt Firebase initialization if config resources exist
+        try {
+            if (com.google.firebase.FirebaseApp.getApps(this).isEmpty()) {
+                com.google.firebase.FirebaseApp.initializeApp(this)
+            }
+        } catch (e: Throwable) {
+            android.util.Log.w("MainActivity", "FirebaseApp initialization note: ${e.message}")
+        }
+
         // Initialize local Room layers
         val database = AppDatabase.getDatabase(this)
         val repository = DexcargoRepository(database)

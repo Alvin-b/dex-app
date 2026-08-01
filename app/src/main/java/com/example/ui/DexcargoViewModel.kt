@@ -1449,7 +1449,7 @@ class DexcargoViewModel(
             onComplete?.invoke(false, msg)
             return
         }
-        val email = empRegEmail.value.trim()
+        val email = empRegEmail.value.trim().lowercase()
         val pass = empRegPass.value.trim()
         val name = if (empRegName.value.isBlank()) {
             email.split("@").first().replaceFirstChar { it.uppercase() }
@@ -1463,227 +1463,164 @@ class DexcargoViewModel(
         }
 
         viewModelScope.launch {
-            if (isOnline.value) {
-                var creationSucceeded = false
-                var successMsg = ""
-                var lastErrDetail = ""
+            if (!isOnline.value) {
+                val msg = "An active online connection is required to create users on Supabase."
+                _syncStatusMessage.value = msg
+                onComplete?.invoke(false, msg)
+                return@launch
+            }
 
-                val bearerHeader = SupabaseClient.getBearerHeader()
-                val activeApiKey = SupabaseClient.API_KEY
+            var creationSucceeded = false
+            var successMsg = ""
+            var lastErrDetail = ""
 
-                try {
-                    var newAuthUserId: String? = null
+            val activeApiKey = SupabaseClient.API_KEY
 
-                    // 1. First Attempt: Call Supabase Auth Signup API (/auth/v1/signup)
-                    val signupReq = com.example.data.api.SignupRequest(
-                        email = email,
-                        password = pass,
-                        data = mapOf(
-                            "full_name" to name,
-                            "name" to name,
-                            "role" to canonicalRole
-                        )
-                    )
-                    val signupResp = try {
-                        SupabaseClient.api.signup(
+            // 1. Ensure valid JWT token session exists for active admin before calling endpoint
+            if (SupabaseClient.accessToken.isNullOrBlank() || System.currentTimeMillis() >= SupabaseClient.tokenExpiryTime - 60000) {
+                val curEmp = _currentEmployee.value
+                if (curEmp != null && curEmp.email.contains("@") && curEmp.password.isNotBlank()) {
+                    try {
+                        val loginResp = SupabaseClient.api.login(
                             apiKey = activeApiKey,
-                            authHeader = null,
-                            request = signupReq
+                            request = com.example.data.api.LoginRequest(email = curEmp.email, password = curEmp.password)
                         )
+                        if (loginResp.isSuccessful && loginResp.body() != null) {
+                            val body = loginResp.body()!!
+                            SupabaseClient.saveSession(
+                                token = body.accessToken,
+                                refresh = body.refreshToken,
+                                userId = body.user.id,
+                                email = body.user.email,
+                                expiresInSec = body.expiresIn
+                            )
+                        }
                     } catch (e: Exception) {
-                        null
+                        android.util.Log.w("RegisterEmployee", "Auto-login session refresh note: ${e.message}")
                     }
+                } else if (!SupabaseClient.refreshToken.isNullOrBlank()) {
+                    try {
+                        SupabaseClient.refreshSessionSync()
+                    } catch (e: Exception) {
+                        android.util.Log.w("RegisterEmployee", "Refresh token note: ${e.message}")
+                    }
+                }
+            }
 
-                    if (signupResp != null && signupResp.isSuccessful) {
-                        val signupBody = signupResp.body()
-                        newAuthUserId = signupBody?.user?.id ?: signupBody?.id
-                        android.util.Log.d("RegisterEmployee", "Supabase signup succeeded. Auth UUID: $newAuthUserId")
-                    } else {
-                        val signupErrBody = try { signupResp?.errorBody()?.string() } catch (e: Exception) { null }
-                        val parsedSignupErr = parseJsonError(signupErrBody)
-                        if (!parsedSignupErr.isNullOrBlank()) {
-                            lastErrDetail = parsedSignupErr
-                        }
+            var bearerHeader = SupabaseClient.getBearerHeader()
 
-                        // 2. Second Attempt: Try Admin Auth API (/auth/v1/admin/users)
-                        val adminAuthResp = try {
-                            SupabaseClient.api.createAuthUserAdmin(
+            // 2. Call backend API /api/public/admin/employees directly on Supabase backend
+            try {
+                val adminReq = com.example.data.api.CreateEmployeeAdminRequest(
+                    fullName = name,
+                    email = email,
+                    password = pass,
+                    phone = null,
+                    role = canonicalRole
+                )
+
+                var adminResp = SupabaseClient.backendApi.createEmployeeAdmin(
+                    authHeader = bearerHeader,
+                    body = adminReq
+                )
+
+                // If 403 or 401, attempt session re-login once as current admin user and retry backend endpoint
+                if (!adminResp.isSuccessful && (adminResp.code() == 403 || adminResp.code() == 401)) {
+                    android.util.Log.w("RegisterEmployee", "Backend endpoint returned HTTP ${adminResp.code()}. Attempting re-authentication...")
+                    val curEmp = _currentEmployee.value
+                    if (curEmp != null && curEmp.email.contains("@") && curEmp.password.isNotBlank()) {
+                        try {
+                            val reLoginResp = SupabaseClient.api.login(
                                 apiKey = activeApiKey,
-                                authHeader = bearerHeader,
-                                body = mapOf(
-                                    "email" to email,
-                                    "password" to pass,
-                                    "email_confirm" to true,
-                                    "user_metadata" to mapOf(
-                                        "full_name" to name,
-                                        "name" to name,
-                                        "role" to canonicalRole
-                                    )
-                                )
+                                request = com.example.data.api.LoginRequest(email = curEmp.email, password = curEmp.password)
                             )
-                        } catch (e: Exception) {
-                            null
-                        }
-
-                        if (adminAuthResp != null && adminAuthResp.isSuccessful) {
-                            val bodyMap = adminAuthResp.body()
-                            newAuthUserId = bodyMap?.get("id")?.toString() ?: bodyMap?.get("user_id")?.toString()
-                            android.util.Log.d("RegisterEmployee", "Supabase createAuthUserAdmin succeeded. Auth UUID: $newAuthUserId")
-                        } else {
-                            // 3. Third Attempt: Try Backend Admin API (/api/admin/employees)
-                            val adminReq = com.example.data.api.CreateEmployeeAdminRequest(
-                                fullName = name,
-                                email = email,
-                                password = pass,
-                                phone = "",
-                                role = canonicalRole
-                            )
-                            val adminResp = try {
-                                SupabaseClient.backendApi.createEmployeeAdmin(
-                                    apiKey = activeApiKey,
+                            if (reLoginResp.isSuccessful && reLoginResp.body() != null) {
+                                val b = reLoginResp.body()!!
+                                SupabaseClient.saveSession(token = b.accessToken, refresh = b.refreshToken, userId = b.user.id, email = b.user.email, expiresInSec = b.expiresIn)
+                                bearerHeader = SupabaseClient.getBearerHeader()
+                                adminResp = SupabaseClient.backendApi.createEmployeeAdmin(
                                     authHeader = bearerHeader,
                                     body = adminReq
                                 )
-                            } catch (e: Exception) {
-                                null
                             }
-
-                            if (adminResp != null && adminResp.isSuccessful) {
-                                val bodyMap = adminResp.body()
-                                newAuthUserId = bodyMap?.get("user_id")?.toString()
-                                    ?: bodyMap?.get("id")?.toString()
-                                    ?: bodyMap?.get("employee_code")?.toString()
-                            }
+                        } catch (e: Exception) {
+                            android.util.Log.w("RegisterEmployee", "Re-login retry exception: ${e.message}")
                         }
                     }
+                }
 
-                    // 4. Fallback check: If user already exists in auth.users, resolve existing profile UUID by email
-                    if (newAuthUserId.isNullOrBlank()) {
-                        val existingProfiles = try {
-                            SupabaseClient.api.getProfileByEmail(
-                                apiKey = activeApiKey,
-                                authHeader = bearerHeader,
-                                emailFilter = "eq.$email"
-                            )
-                        } catch (e: Exception) { emptyList() }
-
-                        newAuthUserId = existingProfiles.firstOrNull()?.id
-                    }
-
-                    // CRITICAL: Only proceed if we obtained a REAL server user ID!
-                    if (!newAuthUserId.isNullOrBlank()) {
-                        // Insert/upsert into public.employees table
-                        try {
-                            SupabaseClient.api.insertEmployeeRest(
-                                apiKey = activeApiKey,
-                                authHeader = bearerHeader,
-                                body = mapOf(
-                                    "id" to newAuthUserId,
-                                    "user_id" to newAuthUserId,
-                                    "full_name" to name,
-                                    "email" to email,
-                                    "role" to canonicalRole,
-                                    "is_active" to true,
-                                    "commission_percentage" to 0.0,
-                                    "phone" to ""
-                                )
-                            )
-                        } catch (e: Exception) { e.printStackTrace() }
-
-                        // Insert/upsert into public.profiles table
-                        try {
-                            SupabaseClient.api.createProfile(
-                                apiKey = activeApiKey,
-                                authHeader = bearerHeader,
-                                profile = com.example.data.api.ProfileResponse(
-                                    id = newAuthUserId,
-                                    name = name,
-                                    email = email,
-                                    isActive = true
-                                )
-                            )
-                        } catch (e: Exception) { e.printStackTrace() }
-
-                        // Insert/upsert into public.user_roles table
-                        try {
-                            SupabaseClient.api.insertUserRoleRest(
-                                apiKey = activeApiKey,
-                                authHeader = bearerHeader,
-                                body = mapOf(
-                                    "user_id" to newAuthUserId,
-                                    "role" to canonicalRole
-                                )
-                            )
-                        } catch (e: Exception) { e.printStackTrace() }
-
-                        // Save to local Room DB Employee table so UI updates instantly
-                        val localRole = when (canonicalRole.lowercase()) {
+                if (adminResp.isSuccessful) {
+                    val empApi = adminResp.body()?.toEmployeeApi()
+                    if (empApi != null && !empApi.id.isBlank()) {
+                        val localRole = when (empApi.role?.lowercase()) {
                             "admin" -> "admin"
                             "sales_manager", "sm" -> "sm"
                             "logistics_manager", "lm" -> "lm"
                             else -> "sr"
                         }
                         val newEmpEntity = Employee(
-                            id = newAuthUserId,
-                            name = name,
-                            email = email,
+                            id = empApi.id,
+                            name = empApi.fullName ?: name,
+                            email = empApi.email ?: email,
                             password = pass,
                             role = localRole,
-                            isActive = true
+                            isActive = empApi.isActive
                         )
+                        // Save to local Room DB only as a synced cache of the real Supabase user
                         repository.insertEmployee(newEmpEntity, online = true)
 
                         creationSucceeded = true
-                        successMsg = "User '$name' ($email) registered successfully on server!"
+                        successMsg = "User '${empApi.fullName ?: name}' ($email) created successfully on Supabase!"
                     } else {
-                        creationSucceeded = false
-                        if (lastErrDetail.isBlank()) {
-                            lastErrDetail = "Server auth user could not be created."
-                        }
+                        lastErrDetail = "Server returned invalid employee payload"
                     }
-                } catch (e: Exception) {
-                    lastErrDetail = e.localizedMessage ?: "Connection error"
-                    android.util.Log.e("RegisterEmployee", "User creation error: ${e.message}", e)
-                }
-
-                if (creationSucceeded) {
-                    _syncStatusMessage.value = successMsg
-                    empRegName.value = ""
-                    empRegEmail.value = ""
-                    empRegPass.value = ""
-                    try {
-                        repository.syncAllFromBackend(true)
-                    } catch (e: Exception) {
-                        e.printStackTrace()
-                    }
-                    onComplete?.invoke(true, successMsg)
                 } else {
-                    val fullErr = if (lastErrDetail.isNotBlank()) "Failed to create user on server ($lastErrDetail)" else "Failed to create user on server."
-                    _syncStatusMessage.value = fullErr
-                    onComplete?.invoke(false, fullErr)
+                    val errBody = try { adminResp.errorBody()?.string() } catch (e: Exception) { null }
+                    lastErrDetail = parseJsonError(errBody) ?: when (adminResp.code()) {
+                        401 -> "Session expired — please sign in as an active administrator"
+                        403 -> "HTTP 403: Only an active administrator can create users"
+                        400 -> "Invalid user data or email already registered"
+                        else -> "Request failed (HTTP ${adminResp.code()})"
+                    }
                 }
-            } else {
-                val msg = "Creating staff requires an online connection."
-                _syncStatusMessage.value = msg
-                onComplete?.invoke(false, msg)
+            } catch (e: Exception) {
+                lastErrDetail = e.localizedMessage ?: "Connection error"
+                android.util.Log.e("RegisterEmployee", "User creation primary backend error: ${e.message}", e)
             }
 
-            val actor = currentEmployee.value?.id ?: "ADM-001"
-            repository.insertLog(
-                AuditLog(
-                    id = "AL-" + System.currentTimeMillis(),
-                    action = "REGISTER_EMPLOYEE",
-                    actor = "$actor (${currentEmployee.value?.name ?: "Admin"})",
-                    timestamp = getNowTimestamp(),
-                    details = "Registered new employee $name ($email) as ${canonicalRole.uppercase()}"
-                ),
-                online = isOnline.value
-            )
+            if (creationSucceeded) {
+                _syncStatusMessage.value = successMsg
+                empRegName.value = ""
+                empRegEmail.value = ""
+                empRegPass.value = ""
+                try {
+                    repository.syncAllFromBackend(true)
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+                onComplete?.invoke(true, successMsg)
+
+                val actor = _currentEmployee.value?.id ?: "ADM-001"
+                repository.insertLog(
+                    AuditLog(
+                        id = "AL-" + System.currentTimeMillis(),
+                        action = "REGISTER_EMPLOYEE",
+                        actor = "$actor (${_currentEmployee.value?.name ?: "Admin"})",
+                        timestamp = getNowTimestamp(),
+                        details = "Registered new employee $name ($email) as ${canonicalRole.uppercase()}"
+                    ),
+                    online = isOnline.value
+                )
+            } else {
+                val fullErr = if (lastErrDetail.isNotBlank()) "Failed to create user on Supabase backend ($lastErrDetail)" else "Failed to create user on Supabase backend."
+                _syncStatusMessage.value = fullErr
+                onComplete?.invoke(false, fullErr)
+            }
         }
     }
 
     fun toggleEmployeeActiveState(empId: String) {
-        if (empId == "ADM-001" || empId == "ADM-0001" || empId == currentEmployee.value?.id) {
+        if (empId == "ADM-001" || empId == "ADM-0001" || empId == _currentEmployee.value?.id) {
             _syncStatusMessage.value = "Administrators cannot deactivate themselves or primary administrator."
             return
         }
@@ -1694,7 +1631,6 @@ class DexcargoViewModel(
             if (isOnline.value) {
                 try {
                     val resp = SupabaseClient.backendApi.updateEmployeeStatusAdmin(
-                        apiKey = SupabaseClient.API_KEY,
                         authHeader = SupabaseClient.getBearerHeader(),
                         body = UpdateEmployeeStatusAdminRequest(employeeId = empId, isActive = newStatus)
                     )

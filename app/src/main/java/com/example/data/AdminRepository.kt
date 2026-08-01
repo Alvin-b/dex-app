@@ -15,8 +15,13 @@ import okhttp3.RequestBody
 
 class AdminRepository(private val database: AppDatabase) {
 
-    private val firestore: FirebaseFirestore
-        get() = FirebaseFirestore.getInstance()
+    private val firestore: FirebaseFirestore?
+        get() = try {
+            FirebaseFirestore.getInstance()
+        } catch (t: Throwable) {
+            Log.w("AdminRepository", "FirebaseApp is not initialized: ${t.message}")
+            null
+        }
 
     /**
      * Dedicated method that explicitly validates the user data object
@@ -78,20 +83,26 @@ class AdminRepository(private val database: AppDatabase) {
         Log.d("AdminRepository", "Writing user object to Firestore collection 'users' document '$uid' with payload: $userMap")
 
         var firestoreErrorMsg: String? = null
-        val firestoreSuccess = try {
-            firestore.collection("users")
-                .document(uid)
-                .set(userMap)
-                .await()
-            Log.d("AdminRepository", "Firestore write succeeded for user document UID: $uid")
-            true
-        } catch (fe: com.google.firebase.firestore.FirebaseFirestoreException) {
-            firestoreErrorMsg = "Firestore permission/security or data error [${fe.code}]: ${fe.localizedMessage}"
-            Log.e("AdminRepository", firestoreErrorMsg, fe)
-            false
-        } catch (e: Exception) {
-            firestoreErrorMsg = "Firestore write failed for UID $uid: ${e.localizedMessage}"
-            Log.e("AdminRepository", firestoreErrorMsg, e)
+        val fs = firestore
+        val firestoreSuccess = if (fs != null) {
+            try {
+                fs.collection("users")
+                    .document(uid)
+                    .set(userMap)
+                    .await()
+                Log.d("AdminRepository", "Firestore write succeeded for user document UID: $uid")
+                true
+            } catch (fe: com.google.firebase.firestore.FirebaseFirestoreException) {
+                firestoreErrorMsg = "Firestore permission/security or data error [${fe.code}]: ${fe.localizedMessage}"
+                Log.e("AdminRepository", firestoreErrorMsg, fe)
+                false
+            } catch (e: Exception) {
+                firestoreErrorMsg = "Firestore write failed for UID $uid: ${e.localizedMessage}"
+                Log.e("AdminRepository", firestoreErrorMsg, e)
+                false
+            }
+        } else {
+            Log.d("AdminRepository", "Skipping Firestore write (FirebaseApp uninitialized)")
             false
         }
 
@@ -173,119 +184,67 @@ class AdminRepository(private val database: AppDatabase) {
             it.email.equals(cleanUid, ignoreCase = true)
         }
 
-        var empCodeOrId = targetEmp?.id ?: cleanUid
-        var targetEmail = targetEmp?.email ?: if (cleanUid.contains("@")) cleanUid else ""
-        var authUserId = if (cleanUid.contains("-") && cleanUid.length == 36) cleanUid else (if (targetEmp?.id?.length == 36) targetEmp.id else "")
-
-        // 2. If online and authUserId is not a 36-char UUID, resolve via Supabase REST API
-        if (online && authUserId.length != 36) {
-            val bearerHeader = SupabaseClient.getBearerHeader()
-            val activeApiKey = SupabaseClient.API_KEY
-
-            try {
-                if (targetEmail.isNotBlank()) {
-                    val profilesByEmail = SupabaseClient.api.getProfileByEmail(apiKey = activeApiKey, authHeader = bearerHeader, emailFilter = "eq.$targetEmail")
-                    if (profilesByEmail.isNotEmpty()) {
-                        authUserId = profilesByEmail.first().id
-                    } else {
-                        val empsByEmail = SupabaseClient.api.getEmployeeByEmail(apiKey = activeApiKey, authHeader = bearerHeader, emailFilter = "eq.$targetEmail")
-                        if (empsByEmail.isNotEmpty()) {
-                            authUserId = empsByEmail.first().userId ?: empsByEmail.first().id
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                Log.w("AdminRepository", "Could not resolve auth user UUID online: ${e.message}")
-            }
-        }
+        val targetEmpId = targetEmp?.id ?: cleanUid
 
         if (online) {
             val bearerHeader = SupabaseClient.getBearerHeader()
             val activeApiKey = SupabaseClient.API_KEY
 
-            // Primary: Call backend endpoint /api/admin/delete-user
+            var deletedViaBackend = false
             try {
-                val deleteReq = DeleteUserAdminRequest(employeeId = empCodeOrId)
+                val deleteReq = DeleteUserAdminRequest(employeeId = targetEmpId)
                 val deleteResp = SupabaseClient.backendApi.deleteUserAdminEndpoint(
-                    apiKey = activeApiKey,
                     authHeader = bearerHeader,
                     body = deleteReq
                 )
-                Log.d("AdminRepository", "Backend deleteUserAdminEndpoint result: HTTP ${deleteResp.code()}")
+
+                if (deleteResp.isSuccessful) {
+                    deletedViaBackend = true
+                    Log.d("AdminRepository", "Backend deleteUserAdminEndpoint succeeded (HTTP ${deleteResp.code()})")
+                } else {
+                    val errStr = try { deleteResp.errorBody()?.string() } catch (e: Exception) { null }
+                    val message = errStr ?: deleteResp.message().ifBlank { null } ?: "HTTP ${deleteResp.code()}"
+                    Log.w("AdminRepository", "Backend deleteUserAdminEndpoint note: $message. Executing direct fallback deletion.")
+                }
             } catch (e: Exception) {
-                Log.w("AdminRepository", "backendApi deleteUserAdminEndpoint exception: ${e.message}")
+                Log.w("AdminRepository", "backendApi deleteUserAdminEndpoint exception: ${e.message}. Executing fallback.")
             }
 
-            // A) Delete from Supabase Auth auth.users
-            if (authUserId.length == 36) {
+            if (!deletedViaBackend) {
+                // Direct REST fallback deletion across tables
                 try {
-                    val authResp = SupabaseClient.api.deleteAuthUserAdmin(
-                        userId = authUserId,
-                        apiKey = activeApiKey,
-                        authHeader = bearerHeader
-                    )
-                    Log.d("AdminRepository", "Delete auth.users result: HTTP ${authResp.code()}")
-                } catch (e: Exception) {
-                    Log.e("AdminRepository", "Exception deleting auth user $authUserId: ${e.message}", e)
-                }
-            }
+                    SupabaseClient.api.deleteEmployeeRest(apiKey = activeApiKey, authHeader = bearerHeader, idFilter = "eq.$targetEmpId")
+                } catch (e: Exception) { Log.w("AdminRepository", "REST delete employee note: ${e.message}") }
 
-            // B) Delete from public.employees table across all identifiers
-            try {
-                if (empCodeOrId.isNotBlank()) {
-                    SupabaseClient.api.deleteEmployeeRest(apiKey = activeApiKey, authHeader = bearerHeader, idFilter = "eq.$empCodeOrId")
-                }
-                if (authUserId.isNotBlank() && authUserId != empCodeOrId) {
-                    SupabaseClient.api.deleteEmployeeRest(apiKey = activeApiKey, authHeader = bearerHeader, idFilter = "eq.$authUserId")
-                }
-                if (targetEmail.isNotBlank()) {
-                    SupabaseClient.api.deleteEmployeeRestByEmail(apiKey = activeApiKey, authHeader = bearerHeader, emailFilter = "eq.$targetEmail")
-                }
-            } catch (e: Exception) {
-                Log.e("AdminRepository", "Exception deleting from employees table: ${e.message}", e)
-            }
+                try {
+                    SupabaseClient.api.deleteProfile(apiKey = activeApiKey, authHeader = bearerHeader, idFilter = "eq.$targetEmpId")
+                } catch (e: Exception) { Log.w("AdminRepository", "REST delete profile note: ${e.message}") }
 
-            // C) Delete from public.profiles table
-            try {
-                if (authUserId.isNotBlank()) {
-                    SupabaseClient.api.deleteProfile(apiKey = activeApiKey, authHeader = bearerHeader, idFilter = "eq.$authUserId")
-                }
-                if (empCodeOrId.isNotBlank() && empCodeOrId != authUserId) {
-                    SupabaseClient.api.deleteProfile(apiKey = activeApiKey, authHeader = bearerHeader, idFilter = "eq.$empCodeOrId")
-                }
-                if (targetEmail.isNotBlank()) {
-                    SupabaseClient.api.deleteProfileByEmail(apiKey = activeApiKey, authHeader = bearerHeader, emailFilter = "eq.$targetEmail")
-                }
-            } catch (e: Exception) {
-                Log.e("AdminRepository", "Exception deleting from profiles table: ${e.message}", e)
-            }
+                try {
+                    SupabaseClient.api.deleteUserRole(apiKey = activeApiKey, authHeader = bearerHeader, userIdFilter = "eq.$targetEmpId")
+                } catch (e: Exception) { Log.w("AdminRepository", "REST delete user role note: ${e.message}") }
 
-            // D) Delete from public.user_roles table
-            try {
-                if (authUserId.isNotBlank()) {
-                    SupabaseClient.api.deleteUserRole(apiKey = activeApiKey, authHeader = bearerHeader, userIdFilter = "eq.$authUserId")
-                }
-                if (empCodeOrId.isNotBlank() && empCodeOrId != authUserId) {
-                    SupabaseClient.api.deleteUserRole(apiKey = activeApiKey, authHeader = bearerHeader, userIdFilter = "eq.$empCodeOrId")
-                }
-            } catch (e: Exception) {
-                Log.e("AdminRepository", "Exception deleting from user_roles table: ${e.message}", e)
+                try {
+                    SupabaseClient.api.deleteAuthUserAdmin(userId = targetEmpId, apiKey = activeApiKey, authHeader = bearerHeader)
+                } catch (e: Exception) { Log.w("AdminRepository", "REST delete auth user note: ${e.message}") }
             }
         }
 
         // E) Clean up Firebase Firestore document if active
         try {
-            if (empCodeOrId.isNotBlank()) firestore.collection("users").document(empCodeOrId).delete().await()
-            if (authUserId.isNotBlank() && authUserId != empCodeOrId) firestore.collection("users").document(authUserId).delete().await()
+            val fs = firestore
+            if (fs != null) {
+                if (targetEmpId.isNotBlank()) fs.collection("users").document(targetEmpId).delete().await()
+                if (cleanUid.isNotBlank() && cleanUid != targetEmpId) fs.collection("users").document(cleanUid).delete().await()
+            }
         } catch (e: Exception) {
             Log.w("AdminRepository", "Firestore cleanup note: ${e.localizedMessage}")
         }
 
         // F) Clean up local Room database entries
         try {
-            if (empCodeOrId.isNotBlank()) database.employeeDao().deleteEmployeeById(empCodeOrId)
+            if (targetEmpId.isNotBlank()) database.employeeDao().deleteEmployeeById(targetEmpId)
             if (cleanUid.isNotBlank()) database.employeeDao().deleteEmployeeById(cleanUid)
-            if (authUserId.isNotBlank()) database.employeeDao().deleteEmployeeById(authUserId)
         } catch (e: Exception) {
             Log.e("AdminRepository", "Local Room DB deletion exception: ${e.localizedMessage}")
         }

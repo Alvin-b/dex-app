@@ -105,6 +105,33 @@ data class DeleteUserAdminRequest(
     @Json(name = "employee_id") val employeeId: String
 )
 
+data class CreateEmployeeAdminResponse(
+    @Json(name = "employee") val employee: EmployeeApi? = null,
+    @Json(name = "id") val id: String? = null,
+    @Json(name = "user_id") val userId: String? = null,
+    @Json(name = "employee_code") val employeeCode: String? = null,
+    @Json(name = "full_name") val fullName: String? = null,
+    @Json(name = "email") val email: String? = null,
+    @Json(name = "role") val role: String? = null,
+    @Json(name = "is_active") val isActive: Boolean = true
+) {
+    fun toEmployeeApi(): EmployeeApi? {
+        if (employee != null) return employee
+        if (!id.isNullOrBlank()) {
+            return EmployeeApi(
+                id = id,
+                userId = userId,
+                employeeCode = employeeCode,
+                fullName = fullName,
+                email = email,
+                role = role,
+                isActive = isActive
+            )
+        }
+        return null
+    }
+}
+
 data class CustomerApi(
     @Json(name = "id") val id: String? = null,
     @Json(name = "name") val name: String? = null,
@@ -295,29 +322,25 @@ data class StkPushResponse(
 )
 
 interface MpesaApi {
-    @GET("api/admin/employees")
+    @GET("api/public/admin/employees")
     suspend fun getAdminEmployees(
-        @Header("apikey") apiKey: String = SupabaseClient.API_KEY,
         @Header("Authorization") authHeader: String
     ): Response<EmployeeListAdminResponse>
 
-    @POST("api/admin/employees")
+    @POST("api/public/admin/employees")
     suspend fun createEmployeeAdmin(
-        @Header("apikey") apiKey: String = SupabaseClient.API_KEY,
         @Header("Authorization") authHeader: String,
         @Body body: CreateEmployeeAdminRequest
-    ): Response<Map<String, Any?>>
+    ): Response<CreateEmployeeAdminResponse>
 
-    @PATCH("api/admin/employees")
+    @PATCH("api/public/admin/employees")
     suspend fun updateEmployeeStatusAdmin(
-        @Header("apikey") apiKey: String = SupabaseClient.API_KEY,
         @Header("Authorization") authHeader: String,
         @Body body: UpdateEmployeeStatusAdminRequest
     ): Response<Map<String, Any?>>
 
-    @POST("api/admin/delete-user")
+    @POST("api/public/admin/delete-user")
     suspend fun deleteUserAdminEndpoint(
-        @Header("apikey") apiKey: String = SupabaseClient.API_KEY,
         @Header("Authorization") authHeader: String,
         @Body body: DeleteUserAdminRequest
     ): Response<Map<String, Any?>>
@@ -523,29 +546,25 @@ interface SupabaseApi {
         @Query("select") select: String = "id,user_id,employee_code,full_name,email,role,is_active,commission_percentage,phone"
     ): List<EmployeeApi>
 
-    @GET("api/admin/employees")
+    @GET("api/public/admin/employees")
     suspend fun getAdminEmployees(
-        @Header("apikey") apiKey: String = SupabaseClient.API_KEY,
         @Header("Authorization") authHeader: String
     ): Response<EmployeeListAdminResponse>
 
-    @POST("api/admin/employees")
+    @POST("api/public/admin/employees")
     suspend fun createEmployeeAdmin(
-        @Header("apikey") apiKey: String = SupabaseClient.API_KEY,
         @Header("Authorization") authHeader: String,
         @Body body: CreateEmployeeAdminRequest
-    ): Response<Map<String, Any?>>
+    ): Response<CreateEmployeeAdminResponse>
 
-    @PATCH("api/admin/employees")
+    @PATCH("api/public/admin/employees")
     suspend fun updateEmployeeStatusAdmin(
-        @Header("apikey") apiKey: String = SupabaseClient.API_KEY,
         @Header("Authorization") authHeader: String,
         @Body body: UpdateEmployeeStatusAdminRequest
     ): Response<Map<String, Any?>>
 
-    @POST("api/admin/delete-user")
+    @POST("api/public/admin/delete-user")
     suspend fun deleteUserAdminEndpoint(
-        @Header("apikey") apiKey: String = SupabaseClient.API_KEY,
         @Header("Authorization") authHeader: String,
         @Body body: DeleteUserAdminRequest
     ): Response<Map<String, Any?>>
@@ -1055,7 +1074,7 @@ object SupabaseClient {
 
     fun getBearerHeader(): String {
         val token = accessToken
-        return if (!token.isNullOrBlank()) "Bearer $token" else "Bearer $API_KEY"
+        return if (!token.isNullOrBlank()) "Bearer $token" else ""
     }
 
     fun isUserLoggedIn(): Boolean {

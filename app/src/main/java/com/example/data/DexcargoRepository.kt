@@ -1,5 +1,6 @@
 package com.example.data
 
+import android.util.Log
 import com.example.data.api.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -19,7 +20,12 @@ class DexcargoRepository(private val database: AppDatabase) {
 
     private fun initFirestoreRealtimeSync() {
         try {
-            val firestore = com.google.firebase.firestore.FirebaseFirestore.getInstance()
+            val firestore = try {
+                com.google.firebase.firestore.FirebaseFirestore.getInstance()
+            } catch (t: Throwable) {
+                Log.w("DexcargoRepository", "FirebaseApp not initialized for real-time sync: ${t.message}")
+                null
+            } ?: return
 
             // Real-time listener for users / employees
             firestore.collection("users").addSnapshotListener { snapshot, e ->
@@ -457,10 +463,22 @@ class DexcargoRepository(private val database: AppDatabase) {
 
         // 1. Sync employees
         try {
-            val empApiList = try {
-                SupabaseClient.api.getAllEmployees(apiKey, authHeader)
+            val adminResp = try {
+                SupabaseClient.backendApi.getAdminEmployees(authHeader = authHeader)
             } catch (e: Exception) {
-                emptyList()
+                null
+            }
+
+            val backendEmps = if (adminResp != null && adminResp.isSuccessful) {
+                adminResp.body()?.employees ?: emptyList()
+            } else emptyList()
+
+            val empApiList = if (backendEmps.isNotEmpty()) backendEmps else {
+                try {
+                    SupabaseClient.api.getAllEmployees(apiKey, authHeader)
+                } catch (e: Exception) {
+                    emptyList()
+                }
             }
             if (empApiList.isNotEmpty()) {
                 val existingLocalEmps = database.employeeDao().getAllEmployees().firstOrNull() ?: emptyList()

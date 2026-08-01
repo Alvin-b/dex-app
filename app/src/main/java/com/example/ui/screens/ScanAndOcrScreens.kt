@@ -1445,7 +1445,7 @@ fun CameraXLiveScannerView(
 
                     val executor = Executors.newSingleThreadExecutor()
                     imageAnalysis.setAnalyzer(executor) { imageProxy ->
-                        @OptIn(ExperimentalGetImage::class)
+                        @OptIn(androidx.camera.core.ExperimentalGetImage::class)
                         val mediaImage = imageProxy.image
                         if (mediaImage != null && isAnalyzerActive) {
                             val rotation = imageProxy.imageInfo.rotationDegrees
