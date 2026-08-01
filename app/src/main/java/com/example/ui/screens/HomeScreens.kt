@@ -50,7 +50,7 @@ fun SalesRepHomeScreen(viewModel: DexcargoViewModel) {
     }
 
     val totalCost = remember(myPackages) {
-        myPackages.filter { it.status == "collected" }.sumOf { it.cost }
+        myPackages.filter { it.status == "collected" || it.status == "cleared" || it.status == "paid" }.sumOf { it.cost }
     }
     val commissionAmount = remember(backendCommissions, myPackages) {
         if (backendCommissions.isNotEmpty()) {
@@ -70,9 +70,9 @@ fun SalesRepHomeScreen(viewModel: DexcargoViewModel) {
     }
 
     val regCount = myPackages.count { it.status == "registered" }
-    val paidCount = myPackages.count { it.status == "paid" }
-    val readyCount = myPackages.count { it.status == "paid" }
-    val doneCount = myPackages.count { it.status == "collected" }
+    val paidCount = myPackages.count { it.status == "paid" || it.status == "cleared" }
+    val readyCount = myPackages.count { it.status == "paid" || it.status == "cleared" }
+    val doneCount = myPackages.count { it.status == "collected" || it.status == "cleared" || it.status == "paid" }
 
     val myAlerts = remember(alerts) {
         alerts.filter { it.target == "all" || it.target == "sr" }
@@ -266,8 +266,8 @@ fun LogisticsManagerHomeScreen(viewModel: DexcargoViewModel) {
 
     val totalManaged = packages.size
     val unpaidCount = packages.count { it.status == "registered" }
-    val readyCount = packages.count { it.status == "paid" }
-    val clearedCount = packages.count { it.status == "collected" }
+    val readyCount = packages.count { it.status == "paid" || it.status == "cleared" }
+    val clearedCount = packages.count { it.status == "collected" || it.status == "cleared" || it.status == "paid" }
 
     val myAlerts = remember(alerts) {
         alerts.filter { it.target == "all" || it.target == "lm" }
@@ -622,7 +622,7 @@ fun SalesManagerHomeScreen(viewModel: DexcargoViewModel) {
                 if (salesReps.isNotEmpty()) {
                     salesReps.forEachIndexed { index, rep ->
                         val repPackages = packages.filter { it.salesRep.contains(rep.id, ignoreCase = true) || it.salesRep.contains(rep.name, ignoreCase = true) }
-                        val repRevenue = repPackages.filter { it.status == "collected" }.sumOf { it.cost }
+                        val repRevenue = repPackages.filter { it.status == "collected" || it.status == "cleared" || it.status == "paid" }.sumOf { it.cost }
                         val repComm = (repRevenue * 0.10).toInt()
                         val medal = when (index) {
                             0 -> "🏆"
@@ -661,7 +661,7 @@ fun SalesManagerHomeScreen(viewModel: DexcargoViewModel) {
                     if (salesReps.isNotEmpty()) {
                         salesReps.forEachIndexed { idx, rep ->
                             val repPackages = packages.filter { it.salesRep.contains(rep.id, ignoreCase = true) || it.salesRep.contains(rep.name, ignoreCase = true) }
-                            val repRevenue = repPackages.filter { it.status == "collected" }.sumOf { it.cost }
+                            val repRevenue = repPackages.filter { it.status == "collected" || it.status == "cleared" || it.status == "paid" }.sumOf { it.cost }
                             val repOverride = (repRevenue * 0.05).toInt()
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -762,7 +762,7 @@ fun AdminHomeScreen(viewModel: DexcargoViewModel) {
     val totalOutstanding = packages.filter { it.status == "registered" }.sumOf { it.cost }
     val airPackagesCount = packages.count { it.mode == "Air Freight" }
     val seaPackagesCount = packages.count { it.mode == "Sea Freight" }
-    val collectedCount = packages.count { it.status == "collected" }
+    val collectedCount = packages.count { it.status == "collected" || it.status == "cleared" || it.status == "paid" }
 
     LazyColumn(
         modifier = Modifier
@@ -1228,11 +1228,11 @@ fun AdminHomeScreen(viewModel: DexcargoViewModel) {
                                 else -> PurpleAccent
                             }
                             val commAmount = when (emp.role) {
-                                "lm" -> packages.count { it.status == "collected" } * 300
-                                "sm" -> (packages.filter { it.status == "collected" }.sumOf { it.cost } * 0.05).toInt()
+                                "lm" -> packages.count { it.status == "collected" || it.status == "cleared" || it.status == "paid" } * 300
+                                "sm" -> (packages.filter { it.status == "collected" || it.status == "cleared" || it.status == "paid" }.sumOf { it.cost } * 0.05).toInt()
                                 "sr" -> {
                                     val repPkgs = packages.filter { it.salesRep.contains(emp.id, ignoreCase = true) || it.salesRep.contains(emp.name, ignoreCase = true) }
-                                    (repPkgs.filter { it.status == "collected" }.sumOf { it.cost } * 0.10).toInt()
+                                    (repPkgs.filter { it.status == "collected" || it.status == "cleared" || it.status == "paid" }.sumOf { it.cost } * 0.10).toInt()
                                 }
                                 else -> 0
                             }

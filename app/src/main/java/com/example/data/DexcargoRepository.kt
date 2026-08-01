@@ -184,26 +184,89 @@ class DexcargoRepository(private val database: AppDatabase) {
             cargoPackage
         }
         database.cargoPackageDao().insertPackage(pkgToSave)
+
+        // Save to Firestore real-time collection
+        try {
+            val firestore = com.google.firebase.firestore.FirebaseFirestore.getInstance()
+            val fsMap = mapOf(
+                "id" to pkgToSave.id,
+                "consignee" to pkgToSave.consignee,
+                "phone" to pkgToSave.phone,
+                "origin" to pkgToSave.origin,
+                "dest" to pkgToSave.dest,
+                "desc" to pkgToSave.desc,
+                "mode" to pkgToSave.mode,
+                "weight" to pkgToSave.weight,
+                "pcs" to pkgToSave.pcs,
+                "cost" to pkgToSave.cost,
+                "salesRep" to pkgToSave.salesRep,
+                "status" to pkgToSave.status,
+                "registeredAt" to pkgToSave.registeredAt,
+                "paidAt" to pkgToSave.paidAt,
+                "collectedAt" to pkgToSave.collectedAt,
+                "collectorName" to pkgToSave.collectorName,
+                "collectorId" to pkgToSave.collectorId,
+                "collectorPhone" to pkgToSave.collectorPhone,
+                "paymentMethod" to pkgToSave.paymentMethod,
+                "paymentRef" to pkgToSave.paymentRef,
+                "packagePhotoUrl" to pkgToSave.packagePhotoUrl
+            )
+            firestore.collection("cargo_packages").document(pkgToSave.id).set(fsMap, com.google.firebase.firestore.SetOptions.merge())
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
         if (online) {
             try {
                 // 1. Upsert Customer
-                SupabaseClient.api.upsertCustomer(
-                    apiKey = SupabaseClient.API_KEY,
-                    authHeader = SupabaseClient.getBearerHeader(),
-                    body = CustomerApi(
-                        name = pkgToSave.consignee,
-                        phone = pkgToSave.phone
+                try {
+                    SupabaseClient.api.upsertCustomer(
+                        apiKey = SupabaseClient.API_KEY,
+                        authHeader = SupabaseClient.getBearerHeader(),
+                        body = CustomerApi(
+                            name = pkgToSave.consignee,
+                            phone = pkgToSave.phone
+                        )
                     )
-                )
+                } catch (e: Exception) { e.printStackTrace() }
 
                 // 2. Insert into canonical packages table
-                SupabaseClient.api.insertPackage(
-                    apiKey = SupabaseClient.API_KEY,
-                    authHeader = SupabaseClient.getBearerHeader(),
-                    body = pkgToSave.toPackageApi(
-                        employeeId = SupabaseClient.currentUserId
+                try {
+                    SupabaseClient.api.insertPackage(
+                        apiKey = SupabaseClient.API_KEY,
+                        authHeader = SupabaseClient.getBearerHeader(),
+                        body = pkgToSave.toPackageApi(
+                            employeeId = SupabaseClient.currentUserId
+                        )
                     )
-                )
+                } catch (e: Exception) { e.printStackTrace() }
+
+                // 3. Update cargo_packages table directly on Supabase backend
+                val backendStatus = if (pkgToSave.status == "collected") "cleared" else pkgToSave.status
+                try {
+                    SupabaseClient.api.updateCargoPackage(
+                        apiKey = SupabaseClient.API_KEY,
+                        authHeader = SupabaseClient.getBearerHeader(),
+                        idFilter = "eq.${pkgToSave.id}",
+                        body = mapOf(
+                            "status" to backendStatus,
+                            "paid_at" to pkgToSave.paidAt,
+                            "collected_at" to pkgToSave.collectedAt,
+                            "cleared_at" to (pkgToSave.collectedAt ?: pkgToSave.paidAt),
+                            "payment_method" to pkgToSave.paymentMethod,
+                            "payment_ref" to pkgToSave.paymentRef
+                        )
+                    )
+                } catch (e: Exception) { e.printStackTrace() }
+
+                try {
+                    SupabaseClient.api.insertCargoPackage(
+                        apiKey = SupabaseClient.API_KEY,
+                        authHeader = SupabaseClient.getBearerHeader(),
+                        prefer = "resolution=merge-duplicates,return=representation",
+                        body = pkgToSave.toApi()
+                    )
+                } catch (e: Exception) { e.printStackTrace() }
 
                 // Clear sync pending on local DB
                 database.cargoPackageDao().insertPackage(pkgToSave.copy(syncPending = false))

@@ -1125,7 +1125,7 @@ fun CargoPackageApi.toEntity(syncPending: Boolean = false): CargoPackage = Cargo
     pcs = pcs,
     cost = cost,
     salesRep = salesRep,
-    status = if (status == "cleared") "collected" else status,
+    status = if (status == "cleared") "cleared" else status,
     registeredAt = registeredAt,
     paidAt = paidAt,
     collectedAt = collectedAt ?: clearedAt,
@@ -1295,7 +1295,7 @@ fun PackageApi.toEntity(syncPending: Boolean = false): CargoPackage {
 fun CargoPackage.toPackageApi(packageUuid: String? = null, customerId: String? = null, employeeId: String? = null): PackageApi {
     val canonicalStatus = when (status.lowercase()) {
         "registered" -> "received"
-        "paid" -> "paid"
+        "paid", "cleared" -> "paid"
         "collected" -> "collected"
         else -> status
     }

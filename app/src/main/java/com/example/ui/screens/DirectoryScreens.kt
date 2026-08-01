@@ -59,7 +59,7 @@ fun PackageListScreen(viewModel: DexcargoViewModel) {
                     "all" -> it.status == "registered"
                     "sea" -> it.status == "registered" && it.mode == "Sea Freight"
                     "air" -> it.status == "registered" && it.mode == "Air Freight"
-                    "cleared" -> it.status == "collected" || it.status == "cleared"
+                    "cleared" -> it.status == "collected" || it.status == "cleared" || it.status == "paid"
                     else -> true
                 }
             }
