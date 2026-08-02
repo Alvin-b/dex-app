@@ -1385,17 +1385,15 @@ class DexcargoViewModel(
                 repository.insertAllocation(alloc, online = isOnline.value)
 
                 // Update package to cleared/paid status
-                val originalPkg = repository.getPackageById(linkPkg.id)
-                if (originalPkg != null) {
-                    val updated = originalPkg.copy(
-                        status = "cleared",
-                        paidAt = nowTs,
-                        collectedAt = nowTs,
-                        paymentMethod = "Linked Reference",
-                        paymentRef = notif.notificationNumber
-                    )
-                    repository.insertPackage(updated, online = true)
-                }
+                val originalPkg = repository.getPackageById(linkPkg.id) ?: linkPkg
+                val updated = originalPkg.copy(
+                    status = "cleared",
+                    paidAt = if (originalPkg.paidAt.isNullOrBlank()) nowTs else originalPkg.paidAt,
+                    collectedAt = if (originalPkg.collectedAt.isNullOrBlank()) nowTs else originalPkg.collectedAt,
+                    paymentMethod = "Linked Reference",
+                    paymentRef = notif.notificationNumber
+                )
+                repository.insertPackage(updated, online = isOnline.value)
 
                 repository.insertLog(
                     AuditLog(
@@ -1410,6 +1408,7 @@ class DexcargoViewModel(
             }
 
             repository.updateNotificationStatus(notif.id, "LINKED", online = isOnline.value)
+            try { repository.syncAllFromBackend(true) } catch (e: Exception) { e.printStackTrace() }
             linkingNotifId.value = null
             selectedLinkOrders.clear()
             activePaymentTab.value = "audit"

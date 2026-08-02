@@ -169,7 +169,7 @@ fun LinkPaymentScreen(viewModel: DexcargoViewModel) {
 
     // Filter unpaid registered packages
     val unpaidPackages = remember(packages) {
-        packages.filter { it.status == "registered" }
+        packages.filter { it.status == "registered" || it.status == "awaiting_payment" }
     }
 
     val filteredPackages = remember(unpaidPackages, searchQuery.value) {
