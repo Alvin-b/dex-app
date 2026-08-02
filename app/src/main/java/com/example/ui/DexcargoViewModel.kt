@@ -498,7 +498,7 @@ class DexcargoViewModel(
     }
 
     fun loginWithPinCode(pin: String): Boolean {
-        val emp = quickAccessEmployee.value ?: return false
+        val emp = quickAccessEmployee.value ?: _currentEmployee.value ?: return false
         if (emp.pin == pin) {
             _currentEmployee.value = emp
             routeToUserHome()
@@ -513,7 +513,7 @@ class DexcargoViewModel(
     }
 
     fun loginWithBiometrics(): Boolean {
-        val emp = quickAccessEmployee.value ?: return false
+        val emp = quickAccessEmployee.value ?: _currentEmployee.value ?: return false
         if (emp.biometricEnabled) {
             _currentEmployee.value = emp
             routeToUserHome()

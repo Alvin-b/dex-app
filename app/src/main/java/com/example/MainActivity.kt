@@ -38,6 +38,20 @@ import com.example.ui.theme.*
 
 class MainActivity : FragmentActivity() {
     private lateinit var viewModel: DexcargoViewModel
+    private var isCameraOrGalleryActive = false
+
+    override fun onStop() {
+        super.onStop()
+        if (!isCameraOrGalleryActive && ::viewModel.isInitialized) {
+            val emp = viewModel.currentEmployee.value
+            val currScreen = viewModel.currentScreen.value
+            if (emp != null && !emp.pin.isNullOrEmpty() && currScreen !is Screen.SetPin && currScreen !is Screen.Login && currScreen !is Screen.EnterPin) {
+                viewModel.quickAccessEmployee.value = emp
+                viewModel.navigateTo(Screen.EnterPin)
+            }
+        }
+        isCameraOrGalleryActive = false
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -90,9 +104,11 @@ class MainActivity : FragmentActivity() {
             viewModel.triggerStickerCameraEvent.collect {
                 if (checkSelfPermission(android.Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
                     try {
+                        isCameraOrGalleryActive = true
                         val intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
                         startActivityForResult(intent, 102)
                     } catch (e: Exception) {
+                        isCameraOrGalleryActive = false
                         android.widget.Toast.makeText(this@MainActivity, "Could not open camera.", android.widget.Toast.LENGTH_SHORT).show()
                     }
                 } else {
@@ -105,9 +121,11 @@ class MainActivity : FragmentActivity() {
             viewModel.triggerPackageCameraEvent.collect {
                 if (checkSelfPermission(android.Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
                     try {
+                        isCameraOrGalleryActive = true
                         val intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
                         startActivityForResult(intent, 104)
                     } catch (e: Exception) {
+                        isCameraOrGalleryActive = false
                         android.widget.Toast.makeText(this@MainActivity, "Could not open camera: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
                     }
                 } else {
@@ -120,9 +138,11 @@ class MainActivity : FragmentActivity() {
             viewModel.triggerEvidenceCameraEvent.collect {
                 if (checkSelfPermission(android.Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
                     try {
+                        isCameraOrGalleryActive = true
                         val intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
                         startActivityForResult(intent, 106)
                     } catch (e: Exception) {
+                        isCameraOrGalleryActive = false
                         android.widget.Toast.makeText(this@MainActivity, "Could not open camera.", android.widget.Toast.LENGTH_SHORT).show()
                     }
                 } else {
@@ -134,9 +154,11 @@ class MainActivity : FragmentActivity() {
         lifecycleScope.launch {
             viewModel.triggerStickerGalleryEvent.collect {
                 try {
+                    isCameraOrGalleryActive = true
                     val intent = Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
                     startActivityForResult(intent, 107)
                 } catch (e: Exception) {
+                    isCameraOrGalleryActive = false
                     android.widget.Toast.makeText(this@MainActivity, "Could not open gallery.", android.widget.Toast.LENGTH_SHORT).show()
                 }
             }
@@ -145,9 +167,11 @@ class MainActivity : FragmentActivity() {
         lifecycleScope.launch {
             viewModel.triggerPackageGalleryEvent.collect {
                 try {
+                    isCameraOrGalleryActive = true
                     val intent = Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
                     startActivityForResult(intent, 109)
                 } catch (e: Exception) {
+                    isCameraOrGalleryActive = false
                     android.widget.Toast.makeText(this@MainActivity, "Could not open gallery.", android.widget.Toast.LENGTH_SHORT).show()
                 }
             }
@@ -156,9 +180,11 @@ class MainActivity : FragmentActivity() {
         lifecycleScope.launch {
             viewModel.triggerEvidenceGalleryEvent.collect {
                 try {
+                    isCameraOrGalleryActive = true
                     val intent = Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
                     startActivityForResult(intent, 108)
                 } catch (e: Exception) {
+                    isCameraOrGalleryActive = false
                     android.widget.Toast.makeText(this@MainActivity, "Could not open gallery.", android.widget.Toast.LENGTH_SHORT).show()
                 }
             }
@@ -168,9 +194,11 @@ class MainActivity : FragmentActivity() {
             viewModel.triggerProfileCameraEvent.collect {
                 if (checkSelfPermission(android.Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
                     try {
+                        isCameraOrGalleryActive = true
                         val intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
                         startActivityForResult(intent, 111)
                     } catch (e: Exception) {
+                        isCameraOrGalleryActive = false
                         android.widget.Toast.makeText(this@MainActivity, "Could not open camera.", android.widget.Toast.LENGTH_SHORT).show()
                     }
                 } else {
@@ -182,9 +210,11 @@ class MainActivity : FragmentActivity() {
         lifecycleScope.launch {
             viewModel.triggerProfileGalleryEvent.collect {
                 try {
+                    isCameraOrGalleryActive = true
                     val intent = Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
                     startActivityForResult(intent, 112)
                 } catch (e: Exception) {
+                    isCameraOrGalleryActive = false
                     android.widget.Toast.makeText(this@MainActivity, "Could not open gallery.", android.widget.Toast.LENGTH_SHORT).show()
                 }
             }

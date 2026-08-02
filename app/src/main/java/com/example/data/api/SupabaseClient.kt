@@ -1225,7 +1225,11 @@ fun BroadcastMessageApi.toEntity(): BroadcastMessage = BroadcastMessage(
     timestamp = timestamp
 )
 
-fun EmployeeApi.toEntity(password: String = "password"): Employee {
+fun EmployeeApi.toEntity(
+    password: String = "password",
+    existingPin: String? = null,
+    existingBiometric: Boolean = false
+): Employee {
     val localRole = when (role?.lowercase()) {
         "admin" -> "admin"
         "sales_manager", "sm" -> "sm"
@@ -1240,8 +1244,8 @@ fun EmployeeApi.toEntity(password: String = "password"): Employee {
         password = password,
         role = localRole,
         isActive = isActive,
-        pin = null,
-        biometricEnabled = false
+        pin = existingPin,
+        biometricEnabled = existingBiometric
     )
 }
 

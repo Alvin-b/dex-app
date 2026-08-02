@@ -547,9 +547,11 @@ class DexcargoRepository(private val database: AppDatabase) {
                 val existingLocalEmps = database.employeeDao().getAllEmployees().firstOrNull() ?: emptyList()
                 val existingById = existingLocalEmps.associateBy { it.id }
                 val mappedEmps = empApiList.map { empApi ->
-                    val existing = existingById[empApi.id]
+                    val existing = existingById[empApi.id] ?: existingLocalEmps.find { it.email.equals(empApi.email, ignoreCase = true) }
                     val preservedPass = existing?.password?.takeIf { it.isNotBlank() } ?: "password"
-                    empApi.toEntity(password = preservedPass)
+                    val preservedPin = existing?.pin
+                    val preservedBiometrics = existing?.biometricEnabled ?: false
+                    empApi.toEntity(password = preservedPass, existingPin = preservedPin, existingBiometric = preservedBiometrics)
                 }
                 database.employeeDao().insertEmployees(mappedEmps)
             } else {
