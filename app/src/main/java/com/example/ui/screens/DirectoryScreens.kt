@@ -257,6 +257,7 @@ fun PackageDetailsScreen(viewModel: DexcargoViewModel) {
                     ) {
                         CargoThumbnail(
                             pkg = pkg,
+                            viewModel = viewModel,
                             onClick = {},
                             modifier = Modifier
                                 .size(110.dp)

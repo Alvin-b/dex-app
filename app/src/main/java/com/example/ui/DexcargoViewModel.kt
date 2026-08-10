@@ -1360,6 +1360,10 @@ class DexcargoViewModel(
         }
     }
 
+    suspend fun loadStorageImage(path: String?): ByteArray? {
+        return repository.downloadStorageImage(path)
+    }
+
     fun selectLinkNotification(notifId: String) {
         linkingNotifId.value = notifId
         selectedLinkOrders.clear()

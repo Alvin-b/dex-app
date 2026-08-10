@@ -427,46 +427,44 @@ class DexcargoRepository(private val database: AppDatabase) {
         return null
     }
 
-    fun normalizeStoragePath(raw: String?): String {
-        if (raw.isNullOrBlank()) return ""
-        var path = raw.trim()
-        if (path.contains("/storage/v1/object/")) {
-            path = path.substringAfter("/storage/v1/object/")
-        } else if (path.contains("/object/")) {
-            path = path.substringAfter("/object/")
-        }
-        path = path.removePrefix("/")
-        path = path.removePrefix("public/").removePrefix("authenticated/").removePrefix("/")
-        return path
+    fun normalizeStoragePath(value: String): String {
+        val trimmed = value.trim()
+
+        if (trimmed.startsWith("base64:")) return trimmed
+
+        // Supports a complete Supabase URL as well as a stored relative path.
+        val afterObject = trimmed.substringAfter("/storage/v1/object/", trimmed)
+        return afterObject
+            .substringAfter("storage/v1/object/", afterObject)
+            .trimStart('/')
     }
 
     suspend fun downloadStorageImage(storagePathOrUrl: String?, packageId: String? = null): ByteArray? {
         if (storagePathOrUrl.isNullOrBlank() || storagePathOrUrl == "simulated_url") return null
 
-        if (storagePathOrUrl.startsWith("base64:")) {
-            return try {
-                val cleanBase64 = storagePathOrUrl
+        return try {
+            val normalized = normalizeStoragePath(storagePathOrUrl)
+
+            // Offline image already cached in Room.
+            if (normalized.startsWith("base64:")) {
+                val cleanBase64 = normalized
                     .removePrefix("base64:")
                     .substringAfter("base64,")
                     .substringAfter("data:image/jpeg;base64,")
                     .substringAfter("data:image/png;base64,")
                     .trim()
-                android.util.Base64.decode(cleanBase64, android.util.Base64.DEFAULT)
-            } catch (e: Exception) {
-                null
+                return android.util.Base64.decode(cleanBase64, android.util.Base64.DEFAULT)
             }
-        }
 
-        val cleanPath = normalizeStoragePath(storagePathOrUrl)
+            val cleanPath = normalized.removePrefix("authenticated/").removePrefix("public/").trimStart('/')
 
-        val pathsToTry = mutableListOf<String>()
+            val pathsToTry = mutableListOf<String>()
 
-        if (cleanPath.isNotBlank()) {
             if (cleanPath.startsWith("package-photos/") || cleanPath.startsWith("proofs/")) {
                 pathsToTry.add("authenticated/$cleanPath")
                 pathsToTry.add(cleanPath)
                 pathsToTry.add("public/$cleanPath")
-            } else {
+            } else if (cleanPath.isNotBlank()) {
                 pathsToTry.add("authenticated/package-photos/$cleanPath")
                 pathsToTry.add("package-photos/$cleanPath")
                 pathsToTry.add("public/package-photos/$cleanPath")
@@ -474,46 +472,44 @@ class DexcargoRepository(private val database: AppDatabase) {
                 pathsToTry.add("authenticated/proofs/$cleanPath")
                 pathsToTry.add("proofs/$cleanPath")
                 pathsToTry.add("public/proofs/$cleanPath")
-
-                pathsToTry.add("authenticated/$cleanPath")
-                pathsToTry.add(cleanPath)
-                pathsToTry.add("public/$cleanPath")
             }
-        }
 
-        if (!packageId.isNullOrBlank()) {
-            val pkgId = packageId.trim()
-            if (cleanPath.isNotBlank()) {
-                pathsToTry.add(0, "authenticated/package-photos/$pkgId/$cleanPath")
-                pathsToTry.add(1, "package-photos/$pkgId/$cleanPath")
-                pathsToTry.add(2, "public/package-photos/$pkgId/$cleanPath")
+            if (!packageId.isNullOrBlank()) {
+                val pkgId = packageId.trim()
+                pathsToTry.add("authenticated/package-photos/$pkgId/photo.jpg")
+                pathsToTry.add("package-photos/$pkgId/photo.jpg")
             }
-            pathsToTry.add("authenticated/package-photos/$pkgId/photo.jpg")
-            pathsToTry.add("package-photos/$pkgId/photo.jpg")
-            pathsToTry.add("public/package-photos/$pkgId/photo.jpg")
-            pathsToTry.add("authenticated/package-photos/$pkgId/photo_001.jpg")
-            pathsToTry.add("package-photos/$pkgId/photo_001.jpg")
-            pathsToTry.add("public/package-photos/$pkgId/photo_001.jpg")
-        }
 
-        val distinctPaths = pathsToTry.distinct()
+            val distinctPaths = pathsToTry.distinct()
 
-        for (path in distinctPaths) {
-            try {
-                val responseBody = SupabaseClient.api.downloadStorageObject(
-                    apiKey = SupabaseClient.API_KEY,
-                    authHeader = SupabaseClient.getBearerHeader(),
-                    objectPath = path
-                )
-                val bytes = responseBody.bytes()
-                if (bytes != null && bytes.isNotEmpty()) {
-                    return bytes
+            for (path in distinctPaths) {
+                try {
+                    val response = SupabaseClient.api.downloadStorageObject(
+                        apiKey = SupabaseClient.API_KEY,
+                        authHeader = SupabaseClient.getBearerHeader(),
+                        objectPath = path
+                    )
+
+                    if (response.isSuccessful) {
+                        val bytes = response.body()?.bytes()
+                        if (bytes != null && bytes.isNotEmpty()) {
+                            return bytes
+                        }
+                    } else {
+                        android.util.Log.e(
+                            "DEX_IMAGE",
+                            "Storage download failed: ${response.code()} for $path"
+                        )
+                    }
+                } catch (error: Exception) {
+                    // Try next path candidate
                 }
-            } catch (e: Exception) {
-                // Try next path candidate
             }
+            null
+        } catch (error: Exception) {
+            android.util.Log.e("DEX_IMAGE", "Could not load image", error)
+            null
         }
-        return null
     }
 
     suspend fun downloadPhoto(packageId: String, filename: String): ByteArray? {

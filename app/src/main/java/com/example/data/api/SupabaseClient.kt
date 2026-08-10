@@ -870,7 +870,7 @@ interface SupabaseApi {
         @Header("apikey") apiKey: String,
         @Header("Authorization") authHeader: String,
         @Path(value = "objectPath", encoded = true) objectPath: String
-    ): okhttp3.ResponseBody
+    ): Response<okhttp3.ResponseBody>
 
     @GET("rest/v1/commissions")
     suspend fun getCommissions(

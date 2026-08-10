@@ -261,6 +261,7 @@ fun LinkPaymentScreen(viewModel: DexcargoViewModel) {
                                 ) {
                                     CargoThumbnail(
                                         pkg = itemPkg,
+                                        viewModel = viewModel,
                                         onClick = {},
                                         modifier = Modifier.size(34.dp).clip(RoundedCornerShape(4.dp))
                                     )
@@ -525,6 +526,7 @@ fun LinkPaymentScreen(viewModel: DexcargoViewModel) {
 
                         CargoThumbnail(
                             pkg = pkg,
+                            viewModel = viewModel,
                             onClick = {},
                             modifier = Modifier.size(46.dp).clip(RoundedCornerShape(6.dp))
                         )

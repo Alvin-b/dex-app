@@ -1,6 +1,11 @@
 package com.example.ui.components
 
 import com.example.data.api.SupabaseClient
+import com.example.data.DexcargoRepository
+import com.example.data.AppDatabase
+import com.example.data.CargoPackage
+import com.example.ui.DexcargoViewModel
+import androidx.compose.runtime.LaunchedEffect
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -41,7 +46,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.runtime.collectAsState
 import kotlinx.coroutines.flow.MutableStateFlow
-import com.example.data.CargoPackage
 import com.example.ui.theme.*
 
 object NetworkMonitor {
@@ -425,6 +429,76 @@ fun generateLocalSimulatedPackageBitmap(id: String): android.graphics.Bitmap {
 }
 
 @Composable
+fun StorageImage(
+    storagePathOrUrl: String?,
+    loadImage: suspend (String?) -> ByteArray?,
+    contentDescription: String,
+    modifier: Modifier = Modifier,
+    contentScale: ContentScale = ContentScale.Crop
+) {
+    var bytes by remember(storagePathOrUrl) {
+        mutableStateOf<ByteArray?>(null)
+    }
+    var loading by remember(storagePathOrUrl) {
+        mutableStateOf(!storagePathOrUrl.isNullOrBlank())
+    }
+    var failed by remember(storagePathOrUrl) {
+        mutableStateOf(false)
+    }
+
+    LaunchedEffect(storagePathOrUrl) {
+        loading = !storagePathOrUrl.isNullOrBlank()
+        failed = false
+        bytes = null
+
+        if (!storagePathOrUrl.isNullOrBlank()) {
+            bytes = loadImage(storagePathOrUrl)
+            failed = bytes == null
+        }
+
+        loading = false
+    }
+
+    val bitmap = remember(bytes) {
+        bytes?.let {
+            try {
+                android.graphics.BitmapFactory.decodeByteArray(it, 0, it.size)
+            } catch (e: Exception) {
+                null
+            }
+        }
+    }
+
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(DarkSurfaceVariant),
+        contentAlignment = Alignment.Center
+    ) {
+        when {
+            loading -> CircularProgressIndicator(
+                modifier = Modifier.size(22.dp),
+                strokeWidth = 2.dp,
+                color = OrangeAccent
+            )
+
+            bitmap != null -> Image(
+                bitmap = bitmap.asImageBitmap(),
+                contentDescription = contentDescription,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = contentScale
+            )
+
+            else -> Text(
+                text = "Photo unavailable",
+                color = TextMuted,
+                fontSize = 10.sp
+            )
+        }
+    }
+}
+
+@Composable
 fun RemoteStorageImage(
     storagePathOrUrl: String?,
     contentDescription: String? = null,
@@ -440,127 +514,49 @@ fun RemoteStorageImage(
         repository ?: com.example.data.DexcargoRepository(com.example.data.AppDatabase.getDatabase(context))
     }
 
-    var bitmapState by remember(storagePathOrUrl, packageId) { mutableStateOf<android.graphics.Bitmap?>(null) }
-    var isLoading by remember(storagePathOrUrl, packageId) { mutableStateOf(!storagePathOrUrl.isNullOrBlank() && storagePathOrUrl != "simulated_url") }
-    var isError by remember(storagePathOrUrl, packageId) { mutableStateOf(storagePathOrUrl.isNullOrBlank() || storagePathOrUrl == "simulated_url") }
-
-    androidx.compose.runtime.LaunchedEffect(storagePathOrUrl, packageId) {
-        if (storagePathOrUrl.isNullOrBlank() || storagePathOrUrl == "simulated_url") {
-            isLoading = false
-            isError = true
-            return@LaunchedEffect
-        }
-        isLoading = true
-        isError = false
-        try {
-            val bytes = activeRepo.downloadStorageImage(storagePathOrUrl, packageId = packageId)
-            if (bytes != null && bytes.isNotEmpty()) {
-                val decoded = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                if (decoded != null) {
-                    bitmapState = decoded
-                    isLoading = false
-                } else {
-                    isError = true
-                    isLoading = false
-                }
-            } else {
-                isError = true
-                isLoading = false
-            }
-        } catch (e: Exception) {
-            isError = true
-            isLoading = false
-        }
-    }
-
-    Box(
-        modifier = modifier
-            .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier),
-        contentAlignment = Alignment.Center
-    ) {
-        when {
-            isLoading -> {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(20.dp),
-                    color = OrangeAccent,
-                    strokeWidth = 2.dp
-                )
-            }
-            bitmapState != null -> {
-                Image(
-                    bitmap = bitmapState!!.asImageBitmap(),
-                    contentDescription = contentDescription,
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = contentScale
-                )
-            }
-            fallbackBitmap != null -> {
-                Image(
-                    bitmap = fallbackBitmap.asImageBitmap(),
-                    contentDescription = contentDescription ?: "Package Photo Fallback",
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = contentScale
-                )
-            }
-            else -> {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(DarkSurfaceVariant)
-                        .padding(4.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center
-                ) {
-                    Text(
-                        text = "📷",
-                        fontSize = 14.sp
-                    )
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = "Photo unavailable",
-                        color = TextMuted,
-                        fontSize = 9.sp,
-                        textAlign = TextAlign.Center,
-                        maxLines = 2
-                    )
-                }
-            }
-        }
-    }
+    StorageImage(
+        storagePathOrUrl = storagePathOrUrl,
+        loadImage = { path -> activeRepo.downloadStorageImage(path, packageId = packageId) },
+        contentDescription = contentDescription ?: "Storage Image",
+        modifier = modifier.then(if (onClick != null) Modifier.clickable { onClick() } else Modifier),
+        contentScale = contentScale
+    )
 }
 
 @Composable
 fun CargoThumbnail(
     pkg: CargoPackage,
-    onClick: () -> Unit,
+    viewModel: DexcargoViewModel? = null,
+    onClick: () -> Unit = {},
     modifier: Modifier = Modifier.size(52.dp),
     allowExpand: Boolean = false
 ) {
     var isExpanded by remember { mutableStateOf(false) }
-    val fallbackBitmap = remember(pkg.id) {
-        generateLocalSimulatedPackageBitmap(pkg.id)
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val activeRepo = remember(context) {
+        DexcargoRepository(AppDatabase.getDatabase(context))
+    }
+    val loadImageFunc: suspend (String?) -> ByteArray? = { path ->
+        if (viewModel != null) {
+            viewModel.loadStorageImage(path)
+        } else {
+            activeRepo.downloadStorageImage(path, packageId = pkg.id)
+        }
     }
 
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(8.dp))
-            .border(1.dp, DarkBorder, RoundedCornerShape(8.dp)),
+            .border(1.dp, DarkBorder, RoundedCornerShape(8.dp))
+            .then(if (allowExpand) Modifier.clickable { isExpanded = true } else Modifier.clickable { onClick() }),
         contentAlignment = Alignment.Center
     ) {
-        RemoteStorageImage(
+        StorageImage(
             storagePathOrUrl = pkg.packagePhotoUrl,
-            packageId = pkg.id,
-            fallbackBitmap = fallbackBitmap,
-            contentDescription = "Package Photo",
+            loadImage = loadImageFunc,
+            contentDescription = "Photo for package ${pkg.id}",
             modifier = Modifier.fillMaxSize(),
-            contentScale = ContentScale.Crop,
-            onClick = {
-                if (allowExpand) {
-                    isExpanded = true
-                } else {
-                    onClick()
-                }
-            }
+            contentScale = ContentScale.Crop
         )
 
         if (allowExpand) {
@@ -656,11 +652,10 @@ fun CargoThumbnail(
                             .border(1.dp, DarkBorder, RoundedCornerShape(12.dp)),
                         contentAlignment = Alignment.Center
                     ) {
-                        RemoteStorageImage(
+                        StorageImage(
                             storagePathOrUrl = pkg.packagePhotoUrl,
-                            packageId = pkg.id,
-                            fallbackBitmap = fallbackBitmap,
-                            contentDescription = "Expanded Package Photo",
+                            loadImage = loadImageFunc,
+                            contentDescription = "Full package photo",
                             modifier = Modifier.fillMaxSize(),
                             contentScale = ContentScale.Fit
                         )
