@@ -747,21 +747,28 @@ fun AdminHomeScreen(viewModel: DexcargoViewModel) {
     }
 
     val totalManaged = packages.size
-    val totalRevenue = packages.filter { it.status != "registered" }.sumOf { it.cost }
+    val paidPackages = remember(packages) {
+        packages.filter { it.status == "paid" || it.status == "cleared" || it.status == "collected" || (it.status != "registered" && it.status != "awaiting_payment") }
+    }
+    val totalRevenue = paidPackages.sumOf { it.cost }
     val grossPaidComm = remember(backendCommissions, packages) {
         if (backendCommissions.isNotEmpty()) {
             backendCommissions.sumOf { it.amount }.toInt()
         } else {
-            (totalRevenue * 0.15).toInt() + (packages.size * 300)
+            (totalRevenue * 0.15).toInt()
         }
     }
+    val netCompanyRevenue = (totalRevenue - grossPaidComm).coerceAtLeast(0)
 
     val activeClientsCount = remember(packages) {
         packages.map { it.consignee }.filter { it.isNotBlank() }.distinct().size
     }
 
     val unlinkedNotifsCount = notifications.count { it.status == "PENDING" }
-    val totalOutstanding = packages.filter { it.status == "registered" }.sumOf { it.cost }
+    val unpaidPackages = remember(packages) {
+        packages.filter { it.status == "registered" || it.status == "awaiting_payment" }
+    }
+    val totalOutstanding = unpaidPackages.sumOf { it.cost }
     val airPackagesCount = packages.count { it.mode == "Air Freight" }
     val seaPackagesCount = packages.count { it.mode == "Sea Freight" }
     val collectedCount = packages.count { it.status == "collected" || it.status == "cleared" || it.status == "paid" }
@@ -789,12 +796,13 @@ fun AdminHomeScreen(viewModel: DexcargoViewModel) {
 
         item {
             CommissionHeroCard(
-                label = "Gross Platform Commissions Paid",
-                amount = "KES ${grossPaidComm.toLocaleString()}",
-                indicator = "★ Admin does not earn personal commission",
-                icon = "⚙️",
+                label = "Company Total Revenue (Gross Cleared)",
+                amount = "KES ${totalRevenue.toLocaleString()}",
+                indicator = "Net Treasury: KES ${netCompanyRevenue.toInt().toLocaleString()} | ${paidPackages.size} Paid Cargoes",
+                indicatorColor = GreenAccent,
+                icon = "🏦",
                 gradientBg = Brush.linearGradient(
-                    colors = listOf(PurpleAccentBg, Color(0x058B5CF6), DarkSurface)
+                    colors = listOf(GreenAccentBg, Color(0x0510B981), DarkSurface)
                 )
             )
         }
@@ -817,8 +825,8 @@ fun AdminHomeScreen(viewModel: DexcargoViewModel) {
                 )
                 StatCard(
                     modifier = Modifier.weight(1f),
-                    num = "KES ${totalRevenue.toLocaleString()}",
-                    label = "Gross Revenue",
+                    num = "KES ${netCompanyRevenue.toInt().toLocaleString()}",
+                    label = "Net Company Treasury",
                     icon = "💰",
                     color = GreenAccent
                 )
@@ -857,18 +865,18 @@ fun AdminHomeScreen(viewModel: DexcargoViewModel) {
             ) {
                 StatCard(
                     modifier = Modifier.weight(1f),
+                    num = "KES ${grossPaidComm.toLocaleString()}",
+                    label = "Commissions Paid",
+                    icon = "⚙️",
+                    color = PurpleAccent,
+                    onClick = { viewModel.navigateTo(Screen.MyCommissions) }
+                )
+                StatCard(
+                    modifier = Modifier.weight(1f),
                     num = "KES ${totalOutstanding.toLocaleString()}",
                     label = "Awaiting Payment",
                     icon = "⏳",
                     color = OrangeAccent
-                )
-                StatCard(
-                    modifier = Modifier.weight(1f),
-                    num = "$unlinkedNotifsCount Receipts",
-                    label = "Unlinked Receipts",
-                    icon = "🧾",
-                    color = PurpleAccent,
-                    onClick = { viewModel.navigateTo(Screen.PaymentNotificationCenter) }
                 )
             }
             Spacer(modifier = Modifier.height(10.dp))
@@ -878,6 +886,14 @@ fun AdminHomeScreen(viewModel: DexcargoViewModel) {
                     .padding(horizontal = 16.dp, vertical = 2.dp),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
+                StatCard(
+                    modifier = Modifier.weight(1f),
+                    num = "$unlinkedNotifsCount Receipts",
+                    label = "Unlinked Receipts",
+                    icon = "🧾",
+                    color = BlueAccent,
+                    onClick = { viewModel.navigateTo(Screen.PaymentNotificationCenter) }
+                )
                 StatCard(
                     modifier = Modifier.weight(1f),
                     num = "✈️ $airPackagesCount / 🚢 $seaPackagesCount",
@@ -1031,8 +1047,9 @@ fun AdminHomeScreen(viewModel: DexcargoViewModel) {
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
+                                val empCodeLabel = if (emp.id.startsWith("SR") || emp.id.startsWith("ADM") || emp.id.startsWith("SM") || emp.id.startsWith("LM")) " (${emp.id})" else ""
                                 Text(
-                                    text = "${emp.name} (${emp.id})",
+                                    text = "${emp.name}$empCodeLabel",
                                     color = TextPrimary,
                                     fontSize = 11.5.sp,
                                     fontWeight = FontWeight.Bold
@@ -1304,7 +1321,7 @@ fun EmployeeProfileBar(
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    text = "$roleLabel · $id",
+                    text = roleLabel,
                     color = badgeColor,
                     fontSize = 10.5.sp,
                     fontWeight = FontWeight.SemiBold

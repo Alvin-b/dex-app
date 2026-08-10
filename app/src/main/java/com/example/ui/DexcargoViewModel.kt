@@ -386,7 +386,11 @@ class DexcargoViewModel(
 
     fun getDefaultSalesRep(): String {
         val emp = currentEmployee.value
-        return emp?.name ?: "John Kamau"
+        return if (emp != null) {
+            "${emp.id} ${emp.name}".trim()
+        } else {
+            "SR-0001 John Kamau"
+        }
     }
 
     // Upload payload form
@@ -1227,6 +1231,56 @@ class DexcargoViewModel(
         }
     }
 
+    private suspend fun awardPackageCommission(pkg: CargoPackage, nowTs: String, source: String, notifNum: String? = null): Double {
+        val allEmps = employees.value
+        val salesRepStr = pkg.salesRep
+        var targetEmpId = allEmps.find { emp ->
+            salesRepStr.contains(emp.id, ignoreCase = true) ||
+            (emp.name.isNotBlank() && salesRepStr.contains(emp.name, ignoreCase = true)) ||
+            (emp.email.isNotBlank() && salesRepStr.contains(emp.email.substringBefore("@"), ignoreCase = true))
+        }?.id
+
+        if (targetEmpId.isNullOrBlank()) {
+            val match = Regex("(ADM|SR|SM|LM|EMP)-[0-9]+", RegexOption.IGNORE_CASE).find(salesRepStr)
+            targetEmpId = match?.value?.uppercase() ?: currentEmployee.value?.id ?: "EMP-001"
+        }
+
+        val emp = allEmps.find { it.id == targetEmpId }
+        val empRole = emp?.role?.lowercase() ?: "sr"
+        val rate = when (empRole) {
+            "sr", "sales_rep" -> 0.05
+            "sm", "sales_manager" -> 0.02
+            "lm", "logistics_manager" -> 0.015
+            else -> 0.05
+        }
+        val commAmount = pkg.cost * rate
+        val commId = "COMM-" + System.currentTimeMillis() + "-" + Random().nextInt(1000)
+        val newComm = com.example.data.api.CommissionApi(
+            id = commId,
+            orderId = pkg.id,
+            employeeId = targetEmpId,
+            commissionType = source,
+            grossProfit = pkg.cost.toDouble(),
+            rate = rate,
+            amount = commAmount,
+            status = "approved",
+            createdAt = nowTs
+        )
+
+        try {
+            repository.insertCommissionOnBackend(newComm)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
+        val currentCommList = backendCommissions.value.toMutableList()
+        currentCommList.removeAll { it.orderId == pkg.id && it.employeeId == targetEmpId }
+        currentCommList.add(0, newComm)
+        backendCommissions.value = currentCommList
+
+        return commAmount
+    }
+
     fun submitCashPayment() {
         confirmPayment("Cash")
     }
@@ -1239,19 +1293,21 @@ class DexcargoViewModel(
         viewModelScope.launch {
             val pkg = repository.getPackageById(pkgId)
             if (pkg != null) {
+                val nowTs = getNowTimestamp()
                 val updated = pkg.copy(
                     status = "paid",
-                    paidAt = getNowTimestamp(),
+                    paidAt = nowTs,
                     paymentMethod = method,
                     paymentRef = ref
                 )
                 repository.insertPackage(updated, online = isOnline.value)
+                awardPackageCommission(updated, nowTs, "direct_payment")
                 repository.insertLog(
                     AuditLog(
                         id = "AL-" + System.currentTimeMillis(),
                         action = "PAYMENT_CONFIRMED",
                         actor = "$actor (${currentEmployee.value?.name})",
-                        timestamp = getNowTimestamp(),
+                        timestamp = nowTs,
                         details = "Confirmed payment of KES ${pkg.cost} for ${pkg.id} via $method (Ref: $ref)"
                     ),
                     online = isOnline.value
@@ -1415,49 +1471,7 @@ class DexcargoViewModel(
                 repository.insertPackage(updated, online = isOnline.value)
 
                 // Extract employee tied to package & award commission
-                val salesRepStr = linkPkg.salesRep
-                var targetEmpId = allEmps.find { emp ->
-                    salesRepStr.contains(emp.id, ignoreCase = true) ||
-                    (emp.name.isNotBlank() && salesRepStr.contains(emp.name, ignoreCase = true)) ||
-                    (emp.email.isNotBlank() && salesRepStr.contains(emp.email.substringBefore("@"), ignoreCase = true))
-                }?.id
-
-                if (targetEmpId.isNullOrBlank()) {
-                    val match = Regex("(ADM|SR|SM|LM|EMP)-[0-9]+", RegexOption.IGNORE_CASE).find(salesRepStr)
-                    targetEmpId = match?.value?.uppercase() ?: currentEmployee.value?.id ?: "EMP-001"
-                }
-
-                val emp = allEmps.find { it.id == targetEmpId }
-                val empRole = emp?.role?.lowercase() ?: "sr"
-                val rate = when (empRole) {
-                    "sr", "sales_rep" -> 0.05
-                    "sm", "sales_manager" -> 0.02
-                    "lm", "logistics_manager" -> 0.015
-                    else -> 0.05
-                }
-                val commAmount = linkPkg.cost * rate
-                val commId = "COMM-" + System.currentTimeMillis() + "-" + Random().nextInt(1000)
-                val newComm = com.example.data.api.CommissionApi(
-                    id = commId,
-                    orderId = linkPkg.id,
-                    employeeId = targetEmpId,
-                    commissionType = "payment_linked",
-                    grossProfit = linkPkg.cost.toDouble(),
-                    rate = rate,
-                    amount = commAmount,
-                    status = "approved",
-                    createdAt = nowTs
-                )
-
-                try {
-                    repository.insertCommissionOnBackend(newComm)
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                }
-
-                val currentCommList = backendCommissions.value.toMutableList()
-                currentCommList.add(0, newComm)
-                backendCommissions.value = currentCommList
+                val commAmount = awardPackageCommission(updated, nowTs, "payment_linked", notif.notificationNumber)
 
                 repository.insertLog(
                     AuditLog(
@@ -1465,7 +1479,7 @@ class DexcargoViewModel(
                         action = "LINK_PAYMENT_EVIDENCE",
                         actor = "$actor (${currentEmployee.value?.name})",
                         timestamp = nowTs,
-                        details = "Linked PAY-Evidence ${notif.notificationNumber} to ${linkPkg.id} (Commission KES ${commAmount.toInt()} awarded to $targetEmpId)"
+                        details = "Linked PAY-Evidence ${notif.notificationNumber} to ${linkPkg.id} (Commission KES ${commAmount.toInt()} awarded)"
                     ),
                     online = isOnline.value
                 )

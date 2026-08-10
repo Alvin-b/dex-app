@@ -381,23 +381,16 @@ fun CommissionsScreen(viewModel: DexcargoViewModel) {
         packages.filter { it.status == "collected" }
     }
 
-    val (earned, paid, outstanding) = remember(filteredCommissions, clearedPackages, activeFilter, isOnline) {
-        if (filteredCommissions.isNotEmpty()) {
-            val filtered = when (activeFilter) {
-                "month" -> filteredCommissions
-                "last" -> filteredCommissions.filter { it.status.equals("paid", ignoreCase = true) }
-                else -> filteredCommissions
-            }
-            val total = filtered.sumOf { it.amount }.toInt()
-            val paidAmt = filtered.filter { it.status.equals("paid", ignoreCase = true) }.sumOf { it.amount }.toInt()
-            val outstandingAmt = total - paidAmt
-            Triple(total, paidAmt, outstandingAmt)
-        } else {
-            val total = clearedPackages.sumOf { (it.cost * 0.10).toInt() }
-            val paidAmt = clearedPackages.filter { it.status == "collected" || it.status == "cleared" }.sumOf { (it.cost * 0.10).toInt() }
-            val outstandingAmt = total - paidAmt
-            Triple(total, paidAmt, outstandingAmt)
+    val (earned, paid, outstanding) = remember(filteredCommissions, activeFilter) {
+        val filtered = when (activeFilter) {
+            "month" -> filteredCommissions
+            "last" -> filteredCommissions.filter { it.status.equals("paid", ignoreCase = true) }
+            else -> filteredCommissions
         }
+        val total = filtered.sumOf { it.amount }.toInt()
+        val paidAmt = filtered.filter { it.status.equals("paid", ignoreCase = true) }.sumOf { it.amount }.toInt()
+        val outstandingAmt = (total - paidAmt).coerceAtLeast(0)
+        Triple(total, paidAmt, outstandingAmt)
     }
 
     Column(

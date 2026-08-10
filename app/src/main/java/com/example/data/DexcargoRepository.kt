@@ -235,11 +235,50 @@ class DexcargoRepository(private val database: AppDatabase) {
                     SupabaseClient.api.insertPackage(
                         apiKey = SupabaseClient.API_KEY,
                         authHeader = SupabaseClient.getBearerHeader(),
+                        prefer = "resolution=merge-duplicates,return=representation",
                         body = pkgToSave.toPackageApi(
                             employeeId = SupabaseClient.currentUserId
                         )
                     )
                 } catch (e: Exception) { e.printStackTrace() }
+
+                // 2b. Explicitly update canonical packages table status and fields by tracking number
+                try {
+                    val statusForPackagesTable = when (pkgToSave.status.lowercase()) {
+                        "paid", "cleared" -> "paid"
+                        "collected" -> "collected"
+                        else -> pkgToSave.status
+                    }
+                    SupabaseClient.api.updatePackageByTrackingNumber(
+                        apiKey = SupabaseClient.API_KEY,
+                        authHeader = SupabaseClient.getBearerHeader(),
+                        trackingNumberFilter = "eq.${pkgToSave.id}",
+                        body = mapOf(
+                            "status" to statusForPackagesTable,
+                            "package_photo_url" to pkgToSave.packagePhotoUrl
+                        )
+                    )
+                } catch (e: Exception) { e.printStackTrace() }
+
+                // 2c. Insert payment record into payments table if package is paid
+                if (pkgToSave.status.lowercase() == "paid" || pkgToSave.status.lowercase() == "cleared" || !pkgToSave.paidAt.isNullOrBlank()) {
+                    try {
+                        val payApi = PaymentApi(
+                            id = "PAY-" + System.currentTimeMillis() + "-" + (1000..9999).random(),
+                            packageId = pkgToSave.id,
+                            amount = pkgToSave.cost.toInt(),
+                            paymentMethod = pkgToSave.paymentMethod ?: "M-PESA",
+                            mpesaReceipt = pkgToSave.paymentRef,
+                            status = "completed",
+                            createdAt = pkgToSave.paidAt ?: java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
+                        )
+                        SupabaseClient.api.insertPayment(
+                            apiKey = SupabaseClient.API_KEY,
+                            authHeader = SupabaseClient.getBearerHeader(),
+                            body = payApi
+                        )
+                    } catch (e: Exception) { e.printStackTrace() }
+                }
 
                 // 3. Update cargo_packages table directly on Supabase backend
                 val backendStatus = if (pkgToSave.status == "collected") "cleared" else pkgToSave.status
@@ -440,74 +479,85 @@ class DexcargoRepository(private val database: AppDatabase) {
     }
 
     suspend fun downloadStorageImage(storagePathOrUrl: String?, packageId: String? = null): ByteArray? {
-        if (storagePathOrUrl.isNullOrBlank() || storagePathOrUrl == "simulated_url") return null
+        if (storagePathOrUrl.isNullOrBlank()) return null
 
-        return try {
-            val normalized = normalizeStoragePath(storagePathOrUrl)
+        val trimmedRaw = storagePathOrUrl.trim()
+        if (trimmedRaw == "simulated_url" ||
+            trimmedRaw == "captured_camera_uri" ||
+            trimmedRaw == "captured_signature_points" ||
+            trimmedRaw == "null" ||
+            trimmedRaw == "undefined" ||
+            trimmedRaw.startsWith("content://") ||
+            trimmedRaw.startsWith("file://") ||
+            trimmedRaw.startsWith("android.resource://") ||
+            trimmedRaw.contains("captured_camera_uri")
+        ) {
+            return null
+        }
 
-            // Offline image already cached in Room.
-            if (normalized.startsWith("base64:")) {
-                val cleanBase64 = normalized
+        if (trimmedRaw.startsWith("base64:")) {
+            return try {
+                val cleanBase64 = trimmedRaw
                     .removePrefix("base64:")
                     .substringAfter("base64,")
                     .substringAfter("data:image/jpeg;base64,")
                     .substringAfter("data:image/png;base64,")
                     .trim()
-                return android.util.Base64.decode(cleanBase64, android.util.Base64.DEFAULT)
+                android.util.Base64.decode(cleanBase64, android.util.Base64.DEFAULT)
+            } catch (e: Exception) {
+                null
             }
+        }
 
-            val cleanPath = normalized.removePrefix("authenticated/").removePrefix("public/").trimStart('/')
+        var path = trimmedRaw
 
-            val pathsToTry = mutableListOf<String>()
+        if (path.contains("/storage/v1/object/")) {
+            path = path.substringAfter("/storage/v1/object/")
+        }
 
-            if (cleanPath.startsWith("package-photos/") || cleanPath.startsWith("proofs/")) {
-                pathsToTry.add("authenticated/$cleanPath")
-                pathsToTry.add(cleanPath)
-                pathsToTry.add("public/$cleanPath")
-            } else if (cleanPath.isNotBlank()) {
-                pathsToTry.add("authenticated/package-photos/$cleanPath")
-                pathsToTry.add("package-photos/$cleanPath")
-                pathsToTry.add("public/package-photos/$cleanPath")
+        path = path.removePrefix("/")
+        path = path.removePrefix("authenticated/").removePrefix("public/").removePrefix("/")
 
-                pathsToTry.add("authenticated/proofs/$cleanPath")
-                pathsToTry.add("proofs/$cleanPath")
-                pathsToTry.add("public/proofs/$cleanPath")
+        if (!path.startsWith("package-photos/") && !path.startsWith("proofs/")) {
+            if (path == "captured_camera_uri" || path == "simulated_url" || path == "captured_signature_points") {
+                return null
             }
-
             if (!packageId.isNullOrBlank()) {
                 val pkgId = packageId.trim()
-                pathsToTry.add("authenticated/package-photos/$pkgId/photo.jpg")
-                pathsToTry.add("package-photos/$pkgId/photo.jpg")
+                path = if (path.isNotBlank()) "package-photos/$pkgId/$path" else "package-photos/$pkgId/photo.jpg"
+            } else if (path.isNotBlank()) {
+                path = "package-photos/$path"
             }
+        }
 
-            val distinctPaths = pathsToTry.distinct()
+        if (!path.startsWith("package-photos/") && !path.startsWith("proofs/")) {
+            android.util.Log.e("DEX_IMAGE", "Unexpected Storage path: $path")
+            return null
+        }
 
-            for (path in distinctPaths) {
-                try {
-                    val response = SupabaseClient.api.downloadStorageObject(
-                        apiKey = SupabaseClient.API_KEY,
-                        authHeader = SupabaseClient.getBearerHeader(),
-                        objectPath = path
-                    )
+        if (path.contains("captured_camera_uri") || path.contains("simulated_url")) {
+            return null
+        }
 
-                    if (response.isSuccessful) {
-                        val bytes = response.body()?.bytes()
-                        if (bytes != null && bytes.isNotEmpty()) {
-                            return bytes
-                        }
-                    } else {
-                        android.util.Log.e(
-                            "DEX_IMAGE",
-                            "Storage download failed: ${response.code()} for $path"
-                        )
-                    }
-                } catch (error: Exception) {
-                    // Try next path candidate
+        return try {
+            val response = SupabaseClient.api.downloadStorageObject(
+                apiKey = SupabaseClient.API_KEY,
+                authHeader = SupabaseClient.getBearerHeader(),
+                objectPath = path
+            )
+
+            if (response.isSuccessful) {
+                val bytes = response.body()?.bytes()
+                if (bytes != null && bytes.isNotEmpty()) {
+                    return bytes
                 }
+            } else {
+                android.util.Log.e("DEX_IMAGE", "Storage download failed: ${response.code()} for $path")
             }
             null
         } catch (error: Exception) {
-            android.util.Log.e("DEX_IMAGE", "Could not load image", error)
+            if (error is kotlinx.coroutines.CancellationException) throw error
+            android.util.Log.e("DEX_IMAGE", "Could not download: $path", error)
             null
         }
     }
@@ -686,34 +736,69 @@ class DexcargoRepository(private val database: AppDatabase) {
         // 2. Sync packages
         try {
             val canonicalPackages = try {
-                val canonicalList = SupabaseClient.api.getPackages(apiKey = apiKey, authHeader = authHeader)
-                canonicalList.map { it.toEntity(syncPending = false) }
+                SupabaseClient.api.getPackages(apiKey = apiKey, authHeader = authHeader)
             } catch (e: Exception) {
                 emptyList()
             }
 
-            val legacyPackages = if (canonicalPackages.isEmpty()) {
-                try {
-                    val legacyList = SupabaseClient.api.getCargoPackages(apiKey, authHeader)
-                    legacyList.map { it.toEntity(syncPending = false) }
-                } catch (e: Exception) {
-                    emptyList()
-                }
-            } else emptyList()
+            val legacyPackages = try {
+                SupabaseClient.api.getCargoPackages(apiKey, authHeader)
+            } catch (e: Exception) {
+                emptyList()
+            }
 
-            val packagesEntities = if (canonicalPackages.isNotEmpty()) canonicalPackages else legacyPackages
+            // cargo_packages.id should match packages.tracking_number.
+            val legacyPhotoByTrackingNumber = legacyPackages.associateBy(
+                keySelector = { it.id },
+                valueTransform = { it.packagePhotoUrl }
+            )
+
+            val packagesEntities = if (canonicalPackages.isNotEmpty()) {
+                canonicalPackages.map { packageApi ->
+                    val canonicalEntity = packageApi.toEntity(syncPending = false)
+
+                    canonicalEntity.copy(
+                        packagePhotoUrl = packageApi.packagePhotoUrl
+                            ?: legacyPhotoByTrackingNumber[packageApi.trackingNumber]
+                            ?: canonicalEntity.packagePhotoUrl
+                    )
+                }
+            } else {
+                legacyPackages.map { it.toEntity(syncPending = false) }
+            }
 
             if (packagesEntities.isNotEmpty()) {
                 val localMap = database.cargoPackageDao().getAllPackages().firstOrNull()?.associateBy { it.id } ?: emptyMap()
                 val mergedEntities = packagesEntities.map { incoming ->
                     val local = localMap[incoming.id]
-                    if (local != null && !local.packagePhotoUrl.isNullOrBlank() && local.packagePhotoUrl.startsWith("base64:") &&
-                        (incoming.packagePhotoUrl.isNullOrBlank() || !incoming.packagePhotoUrl.startsWith("base64:"))
-                    ) {
-                        incoming.copy(packagePhotoUrl = local.packagePhotoUrl)
-                    } else {
-                        incoming
+                    var finalPkg = incoming
+                    if (local != null) {
+                        // Preserve paid or collected status from local database if backend still returns registered or received
+                        val localIsPaid = local.status == "paid" || local.status == "collected" || local.status == "cleared" || !local.paidAt.isNullOrBlank()
+                        val incomingIsRegistered = incoming.status == "registered" || incoming.status == "received" || incoming.status.isBlank()
+                        if (localIsPaid && incomingIsRegistered) {
+                            finalPkg = finalPkg.copy(
+                                status = local.status,
+                                paidAt = local.paidAt ?: finalPkg.paidAt,
+                                paymentMethod = local.paymentMethod ?: finalPkg.paymentMethod,
+                                paymentRef = local.paymentRef ?: finalPkg.paymentRef,
+                                collectedAt = local.collectedAt ?: finalPkg.collectedAt,
+                                collectorName = local.collectorName ?: finalPkg.collectorName,
+                                collectorId = local.collectorId ?: finalPkg.collectorId,
+                                collectorPhone = local.collectorPhone ?: finalPkg.collectorPhone
+                            )
+                        }
+                        if (!local.packagePhotoUrl.isNullOrBlank() && local.packagePhotoUrl.startsWith("base64:") &&
+                            (incoming.packagePhotoUrl.isNullOrBlank() || !incoming.packagePhotoUrl.startsWith("base64:"))
+                        ) {
+                            finalPkg = finalPkg.copy(packagePhotoUrl = local.packagePhotoUrl)
+                        }
                     }
+                    android.util.Log.d(
+                        "DEX_PACKAGE_PHOTO",
+                        "Tracking=${finalPkg.id}, photo=${finalPkg.packagePhotoUrl}, status=${finalPkg.status}"
+                    )
+                    finalPkg
                 }
                 database.cargoPackageDao().insertPackages(mergedEntities)
 

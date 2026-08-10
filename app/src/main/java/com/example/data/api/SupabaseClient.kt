@@ -156,6 +156,7 @@ data class PackageApi(
     @Json(name = "status") val status: String = "received",
     @Json(name = "received_by_employee_id") val receivedByEmployeeId: String? = null,
     @Json(name = "sales_rep") val salesRep: String? = null,
+    @Json(name = "package_photo_url") val packagePhotoUrl: String? = null,
     @Json(name = "created_at") val createdAt: String? = null,
     @Json(name = "customers") val customers: CustomerApi? = null,
     @Json(name = "payments") val payments: List<PaymentApi>? = null,
@@ -645,7 +646,7 @@ interface SupabaseApi {
     suspend fun insertPackage(
         @Header("apikey") apiKey: String = SupabaseClient.API_KEY,
         @Header("Authorization") authHeader: String,
-        @Header("Prefer") prefer: String = "return=representation",
+        @Header("Prefer") prefer: String = "resolution=merge-duplicates,return=representation",
         @Body body: PackageApi
     ): Response<List<PackageApi>>
 
@@ -654,6 +655,14 @@ interface SupabaseApi {
         @Header("apikey") apiKey: String = SupabaseClient.API_KEY,
         @Header("Authorization") authHeader: String,
         @Query("id") idFilter: String,
+        @Body body: Map<String, Any?>
+    ): Response<Unit>
+
+    @PATCH("rest/v1/packages")
+    suspend fun updatePackageByTrackingNumber(
+        @Header("apikey") apiKey: String = SupabaseClient.API_KEY,
+        @Header("Authorization") authHeader: String,
+        @Query("tracking_number") trackingNumberFilter: String,
         @Body body: Map<String, Any?>
     ): Response<Unit>
 
@@ -703,6 +712,14 @@ interface SupabaseApi {
         @Query("package_id") packageIdFilter: String,
         @Query("select") select: String = "*"
     ): List<PaymentApi>
+
+    @POST("rest/v1/payments")
+    suspend fun insertPayment(
+        @Header("apikey") apiKey: String = SupabaseClient.API_KEY,
+        @Header("Authorization") authHeader: String,
+        @Header("Prefer") prefer: String = "resolution=merge-duplicates,return=representation",
+        @Body body: PaymentApi
+    ): Response<Unit>
 
     @GET("rest/v1/cargo_packages")
     suspend fun getCargoPackages(
@@ -1340,7 +1357,7 @@ fun PackageApi.toEntity(syncPending: Boolean = false): CargoPackage {
         collectorPhone = null,
         paymentMethod = completedPayment?.paymentMethod ?: "M-PESA",
         paymentRef = completedPayment?.mpesaReceipt,
-        packagePhotoUrl = null,
+        packagePhotoUrl = packagePhotoUrl,
         syncPending = syncPending
     )
 }
@@ -1368,6 +1385,7 @@ fun CargoPackage.toPackageApi(packageUuid: String? = null, customerId: String? =
         status = canonicalStatus,
         receivedByEmployeeId = employeeId,
         salesRep = salesRep,
+        packagePhotoUrl = packagePhotoUrl,
         createdAt = registeredAt
     )
 }
