@@ -427,19 +427,97 @@ class DexcargoRepository(private val database: AppDatabase) {
         return null
     }
 
-    suspend fun downloadPhoto(packageId: String, filename: String): ByteArray? {
-        return try {
-            val responseBody = SupabaseClient.api.downloadPackagePhoto(
-                apiKey = SupabaseClient.API_KEY,
-                authHeader = SupabaseClient.getBearerHeader(),
-                packageId = packageId,
-                filename = filename
-            )
-            responseBody.bytes()
-        } catch (e: Exception) {
-            e.printStackTrace()
-            null
+    fun normalizeStoragePath(raw: String?): String {
+        if (raw.isNullOrBlank()) return ""
+        var path = raw.trim()
+        if (path.contains("/storage/v1/object/")) {
+            path = path.substringAfter("/storage/v1/object/")
+        } else if (path.contains("/object/")) {
+            path = path.substringAfter("/object/")
         }
+        path = path.removePrefix("/")
+        path = path.removePrefix("public/").removePrefix("authenticated/").removePrefix("/")
+        return path
+    }
+
+    suspend fun downloadStorageImage(storagePathOrUrl: String?, packageId: String? = null): ByteArray? {
+        if (storagePathOrUrl.isNullOrBlank() || storagePathOrUrl == "simulated_url") return null
+
+        if (storagePathOrUrl.startsWith("base64:")) {
+            return try {
+                val cleanBase64 = storagePathOrUrl
+                    .removePrefix("base64:")
+                    .substringAfter("base64,")
+                    .substringAfter("data:image/jpeg;base64,")
+                    .substringAfter("data:image/png;base64,")
+                    .trim()
+                android.util.Base64.decode(cleanBase64, android.util.Base64.DEFAULT)
+            } catch (e: Exception) {
+                null
+            }
+        }
+
+        val cleanPath = normalizeStoragePath(storagePathOrUrl)
+
+        val pathsToTry = mutableListOf<String>()
+
+        if (cleanPath.isNotBlank()) {
+            if (cleanPath.startsWith("package-photos/") || cleanPath.startsWith("proofs/")) {
+                pathsToTry.add("authenticated/$cleanPath")
+                pathsToTry.add(cleanPath)
+                pathsToTry.add("public/$cleanPath")
+            } else {
+                pathsToTry.add("authenticated/package-photos/$cleanPath")
+                pathsToTry.add("package-photos/$cleanPath")
+                pathsToTry.add("public/package-photos/$cleanPath")
+
+                pathsToTry.add("authenticated/proofs/$cleanPath")
+                pathsToTry.add("proofs/$cleanPath")
+                pathsToTry.add("public/proofs/$cleanPath")
+
+                pathsToTry.add("authenticated/$cleanPath")
+                pathsToTry.add(cleanPath)
+                pathsToTry.add("public/$cleanPath")
+            }
+        }
+
+        if (!packageId.isNullOrBlank()) {
+            val pkgId = packageId.trim()
+            if (cleanPath.isNotBlank()) {
+                pathsToTry.add(0, "authenticated/package-photos/$pkgId/$cleanPath")
+                pathsToTry.add(1, "package-photos/$pkgId/$cleanPath")
+                pathsToTry.add(2, "public/package-photos/$pkgId/$cleanPath")
+            }
+            pathsToTry.add("authenticated/package-photos/$pkgId/photo.jpg")
+            pathsToTry.add("package-photos/$pkgId/photo.jpg")
+            pathsToTry.add("public/package-photos/$pkgId/photo.jpg")
+            pathsToTry.add("authenticated/package-photos/$pkgId/photo_001.jpg")
+            pathsToTry.add("package-photos/$pkgId/photo_001.jpg")
+            pathsToTry.add("public/package-photos/$pkgId/photo_001.jpg")
+        }
+
+        val distinctPaths = pathsToTry.distinct()
+
+        for (path in distinctPaths) {
+            try {
+                val responseBody = SupabaseClient.api.downloadStorageObject(
+                    apiKey = SupabaseClient.API_KEY,
+                    authHeader = SupabaseClient.getBearerHeader(),
+                    objectPath = path
+                )
+                val bytes = responseBody.bytes()
+                if (bytes != null && bytes.isNotEmpty()) {
+                    return bytes
+                }
+            } catch (e: Exception) {
+                // Try next path candidate
+            }
+        }
+        return null
+    }
+
+    suspend fun downloadPhoto(packageId: String, filename: String): ByteArray? {
+        return downloadStorageImage("package-photos/$packageId/$filename", packageId = packageId)
     }
 
     // --- COMMISSION OPERATIONS (SECTION 8) ---
@@ -457,6 +535,20 @@ class DexcargoRepository(private val database: AppDatabase) {
         } catch (e: Exception) {
             e.printStackTrace()
             emptyList()
+        }
+    }
+
+    suspend fun insertCommissionOnBackend(commission: CommissionApi): Boolean {
+        return try {
+            val response = SupabaseClient.api.insertCommission(
+                apiKey = SupabaseClient.API_KEY,
+                authHeader = SupabaseClient.getBearerHeader(),
+                body = commission
+            )
+            response.isSuccessful
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
         }
     }
 
@@ -526,21 +618,28 @@ class DexcargoRepository(private val database: AppDatabase) {
 
         // 1. Sync employees
         try {
-            val adminResp = try {
-                SupabaseClient.backendApi.getAdminEmployees(authHeader = authHeader)
+            var empApiList = try {
+                SupabaseClient.api.getAllEmployees(apiKey, authHeader)
             } catch (e: Exception) {
-                null
+                emptyList()
             }
 
-            val backendEmps = if (adminResp != null && adminResp.isSuccessful) {
-                adminResp.body()?.employees ?: emptyList()
-            } else emptyList()
+            val existingLocalEmps = database.employeeDao().getAllEmployees().firstOrNull() ?: emptyList()
 
-            val empApiList = if (backendEmps.isNotEmpty()) backendEmps else {
-                try {
-                    SupabaseClient.api.getAllEmployees(apiKey, authHeader)
-                } catch (e: Exception) {
-                    emptyList()
+            if (empApiList.isEmpty() && !SupabaseClient.accessToken.isNullOrBlank()) {
+                val currentEmail = SupabaseClient.currentUserEmail
+                val currentLocalEmp = existingLocalEmps.find { it.email.equals(currentEmail, ignoreCase = true) }
+                val isAdminUser = currentLocalEmp == null || currentLocalEmp.role.equals("admin", ignoreCase = true) || currentLocalEmp.role.equals("ADM", ignoreCase = true)
+
+                if (isAdminUser) {
+                    val adminResp = try {
+                        SupabaseClient.backendApi.getAdminEmployees(authHeader = authHeader)
+                    } catch (e: Exception) {
+                        null
+                    }
+                    if (adminResp != null && adminResp.isSuccessful) {
+                        empApiList = adminResp.body()?.employees ?: emptyList()
+                    }
                 }
             }
             if (empApiList.isNotEmpty()) {
@@ -622,25 +721,21 @@ class DexcargoRepository(private val database: AppDatabase) {
                 }
                 database.cargoPackageDao().insertPackages(mergedEntities)
 
-                // Asynchronously check and cache package photos starting with package-photos/ for offline access
+                // Asynchronously check and cache package photos and payment evidence for offline access
                 val allUpdatedLocal = database.cargoPackageDao().getAllPackages().firstOrNull() ?: emptyList()
                 allUpdatedLocal.forEach { pkg ->
-                    if (!pkg.packagePhotoUrl.isNullOrBlank() &&
-                        !pkg.packagePhotoUrl.startsWith("base64:") &&
-                        pkg.packagePhotoUrl != "simulated_url"
+                    val rawUrl = pkg.packagePhotoUrl
+                    if (!rawUrl.isNullOrBlank() &&
+                        !rawUrl.startsWith("base64:") &&
+                        rawUrl != "simulated_url"
                     ) {
                         CoroutineScope(Dispatchers.IO).launch {
                             try {
-                                val parts = pkg.packagePhotoUrl.split("/")
-                                if (parts.size >= 3) {
-                                    val packageId = parts[1]
-                                    val filename = parts[2]
-                                    val bytes = downloadPhoto(packageId, filename)
-                                    if (bytes != null) {
-                                        val b64 = android.util.Base64.encodeToString(bytes, android.util.Base64.DEFAULT)
-                                        val updatedPkg = pkg.copy(packagePhotoUrl = "base64:$b64")
-                                        database.cargoPackageDao().insertPackage(updatedPkg)
-                                    }
+                                val bytes = downloadStorageImage(rawUrl, packageId = pkg.id)
+                                if (bytes != null && bytes.isNotEmpty()) {
+                                    val b64 = android.util.Base64.encodeToString(bytes, android.util.Base64.DEFAULT)
+                                    val updatedPkg = pkg.copy(packagePhotoUrl = "base64:$b64")
+                                    database.cargoPackageDao().insertPackage(updatedPkg)
                                 }
                             } catch (e: Exception) {
                                 e.printStackTrace()
@@ -659,6 +754,26 @@ class DexcargoRepository(private val database: AppDatabase) {
             val notificationsEntities = notificationsApi.map { it.toEntity() }
             if (notificationsEntities.isNotEmpty()) {
                 database.paymentNotificationDao().insertNotifications(notificationsEntities)
+
+                // Asynchronously check and cache payment notification evidence images for offline access
+                val allNotifs = database.paymentNotificationDao().getAllNotifications().firstOrNull() ?: emptyList()
+                allNotifs.forEach { notif ->
+                    val rawUrl = notif.imageUrl
+                    if (!rawUrl.isNullOrBlank() && !rawUrl.startsWith("base64:")) {
+                        CoroutineScope(Dispatchers.IO).launch {
+                            try {
+                                val bytes = downloadStorageImage(rawUrl)
+                                if (bytes != null && bytes.isNotEmpty()) {
+                                    val b64 = android.util.Base64.encodeToString(bytes, android.util.Base64.DEFAULT)
+                                    val updatedNotif = notif.copy(imageUrl = "base64:$b64")
+                                    database.paymentNotificationDao().insertNotification(updatedNotif)
+                                }
+                            } catch (e: Exception) {
+                                e.printStackTrace()
+                            }
+                        }
+                    }
+                }
             }
         } catch (e: Exception) {
             e.printStackTrace()

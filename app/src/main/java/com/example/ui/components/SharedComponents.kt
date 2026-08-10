@@ -1,5 +1,7 @@
 package com.example.ui.components
 
+import com.example.data.api.SupabaseClient
+
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -423,6 +425,111 @@ fun generateLocalSimulatedPackageBitmap(id: String): android.graphics.Bitmap {
 }
 
 @Composable
+fun RemoteStorageImage(
+    storagePathOrUrl: String?,
+    contentDescription: String? = null,
+    modifier: Modifier = Modifier,
+    contentScale: ContentScale = ContentScale.Crop,
+    packageId: String? = null,
+    fallbackBitmap: android.graphics.Bitmap? = null,
+    repository: com.example.data.DexcargoRepository? = null,
+    onClick: (() -> Unit)? = null
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val activeRepo = remember(repository, context) {
+        repository ?: com.example.data.DexcargoRepository(com.example.data.AppDatabase.getDatabase(context))
+    }
+
+    var bitmapState by remember(storagePathOrUrl, packageId) { mutableStateOf<android.graphics.Bitmap?>(null) }
+    var isLoading by remember(storagePathOrUrl, packageId) { mutableStateOf(!storagePathOrUrl.isNullOrBlank() && storagePathOrUrl != "simulated_url") }
+    var isError by remember(storagePathOrUrl, packageId) { mutableStateOf(storagePathOrUrl.isNullOrBlank() || storagePathOrUrl == "simulated_url") }
+
+    androidx.compose.runtime.LaunchedEffect(storagePathOrUrl, packageId) {
+        if (storagePathOrUrl.isNullOrBlank() || storagePathOrUrl == "simulated_url") {
+            isLoading = false
+            isError = true
+            return@LaunchedEffect
+        }
+        isLoading = true
+        isError = false
+        try {
+            val bytes = activeRepo.downloadStorageImage(storagePathOrUrl, packageId = packageId)
+            if (bytes != null && bytes.isNotEmpty()) {
+                val decoded = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                if (decoded != null) {
+                    bitmapState = decoded
+                    isLoading = false
+                } else {
+                    isError = true
+                    isLoading = false
+                }
+            } else {
+                isError = true
+                isLoading = false
+            }
+        } catch (e: Exception) {
+            isError = true
+            isLoading = false
+        }
+    }
+
+    Box(
+        modifier = modifier
+            .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier),
+        contentAlignment = Alignment.Center
+    ) {
+        when {
+            isLoading -> {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(20.dp),
+                    color = OrangeAccent,
+                    strokeWidth = 2.dp
+                )
+            }
+            bitmapState != null -> {
+                Image(
+                    bitmap = bitmapState!!.asImageBitmap(),
+                    contentDescription = contentDescription,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = contentScale
+                )
+            }
+            fallbackBitmap != null -> {
+                Image(
+                    bitmap = fallbackBitmap.asImageBitmap(),
+                    contentDescription = contentDescription ?: "Package Photo Fallback",
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = contentScale
+                )
+            }
+            else -> {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(DarkSurfaceVariant)
+                        .padding(4.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Text(
+                        text = "📷",
+                        fontSize = 14.sp
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = "Photo unavailable",
+                        color = TextMuted,
+                        fontSize = 9.sp,
+                        textAlign = TextAlign.Center,
+                        maxLines = 2
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 fun CargoThumbnail(
     pkg: CargoPackage,
     onClick: () -> Unit,
@@ -430,104 +537,65 @@ fun CargoThumbnail(
     allowExpand: Boolean = false
 ) {
     var isExpanded by remember { mutableStateOf(false) }
- 
-    val bitmap = remember(pkg.packagePhotoUrl, pkg.id) {
-        if (!pkg.packagePhotoUrl.isNullOrBlank() && pkg.packagePhotoUrl != "simulated_url") {
-            try {
-                val cleanBase64 = if (pkg.packagePhotoUrl.startsWith("base64:")) pkg.packagePhotoUrl.substringAfter("base64:") else pkg.packagePhotoUrl
-                val decodedBytes = android.util.Base64.decode(cleanBase64, android.util.Base64.DEFAULT)
-                android.graphics.BitmapFactory.decodeByteArray(decodedBytes, 0, decodedBytes.size)
-            } catch (e: Exception) {
-                generateLocalSimulatedPackageBitmap(pkg.id)
-            }
-        } else {
-            generateLocalSimulatedPackageBitmap(pkg.id)
-        }
+    val fallbackBitmap = remember(pkg.id) {
+        generateLocalSimulatedPackageBitmap(pkg.id)
     }
- 
+
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(8.dp))
-            .border(1.dp, DarkBorder, RoundedCornerShape(8.dp))
-            .clickable {
+            .border(1.dp, DarkBorder, RoundedCornerShape(8.dp)),
+        contentAlignment = Alignment.Center
+    ) {
+        RemoteStorageImage(
+            storagePathOrUrl = pkg.packagePhotoUrl,
+            packageId = pkg.id,
+            fallbackBitmap = fallbackBitmap,
+            contentDescription = "Package Photo",
+            modifier = Modifier.fillMaxSize(),
+            contentScale = ContentScale.Crop,
+            onClick = {
                 if (allowExpand) {
                     isExpanded = true
                 } else {
                     onClick()
                 }
-            },
-        contentAlignment = Alignment.Center
-    ) {
-        if (bitmap != null) {
-            Image(
-                bitmap = bitmap.asImageBitmap(),
-                contentDescription = "Package Photo",
-                modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Crop
-            )
-            if (allowExpand) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(4.dp)
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(Color.Black.copy(alpha = 0.75f))
-                        .padding(horizontal = 4.dp, vertical = 2.dp)
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(2.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Search,
-                            contentDescription = "Expand",
-                            tint = OrangeAccent,
-                            modifier = Modifier.size(10.dp)
-                        )
-                        Text(
-                            text = "ZOOM",
-                            color = Color.White,
-                            fontSize = 8.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            letterSpacing = 0.5.sp
-                        )
-                    }
-                }
             }
-        } else {
-            val strokeColor = TextSecondary
-            val accentColor = OrangeAccent
-            Canvas(modifier = Modifier.fillMaxSize()) {
-                // Draw background
-                drawRect(color = DarkSurfaceVariant)
- 
-                // Draw box outlines (simulated cargo package)
-                val center = Offset(size.width / 2, size.height / 2)
-                val boxWidth = size.width * 0.5f
-                val boxHeight = size.height * 0.45f
-                val rectX = center.x - boxWidth / 2
-                val rectY = center.y - boxHeight / 2
- 
-                drawRect(
-                    color = strokeColor,
-                    topLeft = Offset(rectX, rectY),
-                    size = Size(boxWidth, boxHeight),
-                    style = Stroke(width = 1.5.dp.toPx())
-                )
- 
-                // Draw box tape or labels
-                drawLine(
-                    color = accentColor,
-                    start = Offset(rectX + 3.dp.toPx(), rectY + boxHeight / 2),
-                    end = Offset(rectX + boxWidth - 3.dp.toPx(), rectY + boxHeight / 2),
-                    strokeWidth = 2.dp.toPx()
-                )
+        )
+
+        if (allowExpand) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(4.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(Color.Black.copy(alpha = 0.75f))
+                    .padding(horizontal = 4.dp, vertical = 2.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Search,
+                        contentDescription = "Expand",
+                        tint = OrangeAccent,
+                        modifier = Modifier.size(10.dp)
+                    )
+                    Text(
+                        text = "ZOOM",
+                        color = Color.White,
+                        fontSize = 8.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        letterSpacing = 0.5.sp
+                    )
+                }
             }
         }
     }
- 
+
     // EXPANDED PHOTO DIALOG
-    if (isExpanded && bitmap != null) {
+    if (isExpanded) {
         Dialog(
             onDismissRequest = { isExpanded = false }
         ) {
@@ -588,8 +656,10 @@ fun CargoThumbnail(
                             .border(1.dp, DarkBorder, RoundedCornerShape(12.dp)),
                         contentAlignment = Alignment.Center
                     ) {
-                        Image(
-                            bitmap = bitmap.asImageBitmap(),
+                        RemoteStorageImage(
+                            storagePathOrUrl = pkg.packagePhotoUrl,
+                            packageId = pkg.id,
+                            fallbackBitmap = fallbackBitmap,
                             contentDescription = "Expanded Package Photo",
                             modifier = Modifier.fillMaxSize(),
                             contentScale = ContentScale.Fit

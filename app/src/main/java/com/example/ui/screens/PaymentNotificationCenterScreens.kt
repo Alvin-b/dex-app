@@ -223,20 +223,7 @@ fun LinkPaymentScreen(viewModel: DexcargoViewModel) {
                 ) {
                     Text("Notification Ref: ${notif.notificationNumber}", color = TextSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
                     Spacer(modifier = Modifier.height(4.dp))
-                    if (notif.evidenceType == "IMAGE") {
-                        MockSvgWidget(imageName = notif.imageUrl ?: "mpesa")
-                    } else {
-                        Text(
-                            text = notif.textContent ?: "",
-                            color = TextSecondary,
-                            fontSize = 11.sp,
-                            fontFamily = FontFamily.Monospace,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(DarkBg)
-                                .padding(8.dp)
-                        )
-                    }
+                    PaymentEvidenceDisplay(item = notif)
                 }
             }
 
@@ -766,50 +753,20 @@ fun PendingNotificationRow(item: PaymentNotification, viewModel: DexcargoViewMod
 
             Spacer(modifier = Modifier.height(4.dp))
 
-            if (item.evidenceType == "IMAGE") {
-                MockSvgWidget(imageName = item.imageUrl ?: "mpesa")
-                if (!item.textContent.isNullOrBlank()) {
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = item.textContent,
-                        color = OrangeAccent,
-                        fontSize = 11.sp,
-                        fontStyle = FontStyle.Italic,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(DarkBg)
-                            .padding(8.dp)
-                    )
-                }
-            } else {
-                Text(
-                    text = item.textContent ?: "",
-                    color = TextSecondary,
-                    fontSize = 10.sp,
-                    fontFamily = FontFamily.Monospace,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(DarkBg)
-                        .padding(6.dp)
-                )
-            }
+            PaymentEvidenceDisplay(item = item)
 
             Spacer(modifier = Modifier.height(4.dp))
 
             Text("Uploaded by: ${item.uploadedBy}", color = TextMuted, fontSize = 8.5.sp)
             Text("Date: ${item.uploadedAt}", color = TextMuted, fontSize = 8.5.sp)
 
-            // Dynamic Action button for non-admins
-            if (currentEmp?.role != "admin") {
-                Spacer(modifier = Modifier.height(6.dp))
-                DexButton(
-                    text = "🔗 Link Payment",
-                    onClick = { viewModel.selectLinkNotification(item.id) },
-                    style = BlueAccent,
-                    textColor = Color.White
-                )
-            }
+            Spacer(modifier = Modifier.height(6.dp))
+            DexButton(
+                text = "🔗 Link Payment Evidence",
+                onClick = { viewModel.selectLinkNotification(item.id) },
+                style = BlueAccent,
+                textColor = Color.White
+            )
         }
     }
 }
@@ -845,34 +802,7 @@ fun AuditedNotificationRow(item: PaymentNotification, allocations: List<com.exam
 
             Spacer(modifier = Modifier.height(4.dp))
 
-            if (item.evidenceType == "IMAGE") {
-                MockSvgWidget(imageName = item.imageUrl ?: "mpesa")
-                if (!item.textContent.isNullOrBlank()) {
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = item.textContent,
-                        color = GreenAccent,
-                        fontSize = 11.sp,
-                        fontStyle = FontStyle.Italic,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(DarkBg)
-                            .padding(8.dp)
-                    )
-                }
-            } else {
-                Text(
-                    text = item.textContent ?: "",
-                    color = TextSecondary,
-                    fontSize = 10.sp,
-                    fontFamily = FontFamily.Monospace,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(DarkBg)
-                        .padding(6.dp)
-                )
-            }
+            PaymentEvidenceDisplay(item = item)
 
             if (allocations.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(6.dp))
@@ -901,64 +831,195 @@ fun AuditedNotificationRow(item: PaymentNotification, allocations: List<com.exam
 }
 
 @Composable
-fun MockSvgWidget(imageName: String) {
-    if (imageName.startsWith("base64:")) {
-        val base64Str = imageName.substringAfter("base64:")
-        val bitmap = remember(base64Str) {
-            try {
-                val decodedBytes = android.util.Base64.decode(base64Str, android.util.Base64.DEFAULT)
-                android.graphics.BitmapFactory.decodeByteArray(decodedBytes, 0, decodedBytes.size)
-            } catch (e: Exception) {
-                null
-            }
-        }
-        if (bitmap != null) {
-            Image(
-                bitmap = bitmap.asImageBitmap(),
-                contentDescription = "Uploaded Evidence",
+fun PaymentEvidenceDisplay(
+    item: PaymentNotification,
+    modifier: Modifier = Modifier
+) {
+    var showImageDialog by remember { mutableStateOf(false) }
+    var showTextDialog by remember { mutableStateOf(false) }
+
+    Column(modifier = modifier) {
+        if (item.evidenceType == "IMAGE" || !item.imageUrl.isNullOrBlank()) {
+            RemoteStorageImage(
+                storagePathOrUrl = item.imageUrl,
+                contentDescription = "Payment Evidence ${item.notificationNumber}",
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(140.dp)
+                    .height(180.dp)
                     .clip(RoundedCornerShape(10.dp)),
-                contentScale = ContentScale.Fit
+                contentScale = ContentScale.Crop,
+                onClick = { showImageDialog = true }
             )
-            return
+
+            if (!item.textContent.isNullOrBlank()) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = "Note: ${item.textContent}",
+                    color = OrangeAccent,
+                    fontSize = 11.sp,
+                    fontStyle = FontStyle.Italic,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(DarkBg)
+                        .padding(8.dp)
+                )
+            }
+        } else {
+            androidx.compose.foundation.text.selection.SelectionContainer {
+                Text(
+                    text = item.textContent ?: "No text content available.",
+                    color = TextPrimary,
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(DarkBg)
+                        .border(1.dp, DarkBorder, RoundedCornerShape(8.dp))
+                        .padding(8.dp)
+                )
+            }
+            Spacer(modifier = Modifier.height(6.dp))
+            DexButton(
+                text = "📄 View Message",
+                onClick = { showTextDialog = true },
+                style = DarkSurfaceVariant,
+                textColor = TextPrimary,
+                modifier = Modifier.fillMaxWidth()
+            )
         }
     }
 
-    val color = when {
-        imageName.contains("mpesa") -> GreenAccent
-        imageName.contains("bank") -> BlueAccent
-        else -> PurpleAccent
+    if (showImageDialog) {
+        androidx.compose.ui.window.Dialog(onDismissRequest = { showImageDialog = false }) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth(0.95f)
+                    .wrapContentHeight(),
+                shape = RoundedCornerShape(16.dp),
+                color = DarkSurface
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Payment Evidence (${item.notificationNumber})",
+                            color = TextPrimary,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        IconButton(
+                            onClick = { showImageDialog = false },
+                            modifier = Modifier
+                                .size(28.dp)
+                                .clip(CircleShape)
+                                .background(DarkSurfaceVariant)
+                        ) {
+                            Text("✕", color = TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                    RemoteStorageImage(
+                        storagePathOrUrl = item.imageUrl,
+                        contentDescription = "Full Payment Evidence",
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(350.dp)
+                            .clip(RoundedCornerShape(8.dp)),
+                        contentScale = ContentScale.Fit
+                    )
+                    if (!item.textContent.isNullOrBlank()) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        androidx.compose.foundation.text.selection.SelectionContainer {
+                            Text(
+                                text = item.textContent,
+                                color = TextSecondary,
+                                fontSize = 12.sp,
+                                fontFamily = FontFamily.Monospace,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(DarkBg)
+                                    .padding(8.dp)
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Button(
+                        onClick = { showImageDialog = false },
+                        colors = ButtonDefaults.buttonColors(containerColor = OrangeAccent),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Close", color = Color(0xFF1A1200), fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
     }
 
-    val label = when {
-        imageName.contains("mpesa") -> "M-PESA CONFIRMATION"
-        imageName.contains("bank") -> "BANK DEPOSIT SLIP"
-        else -> "MERCHANT RECEIPT"
-    }
-
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
-            .background(Color(0xFF0F111A))
-            .border(1.dp, color.copy(alpha = 0.4f), RoundedCornerShape(10.dp))
-            .padding(10.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(label, color = color, fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp)
-            Spacer(modifier = Modifier.height(2.dp))
-            Text(
-                text = if (imageName.contains("1")) "KES 4,200" else if (imageName.contains("2")) "KES 1,400" else "KES 5,600",
-                color = TextPrimary,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Bold,
-                fontFamily = FontFamily.Monospace
-            )
-            Spacer(modifier = Modifier.height(2.dp))
-            Text("Ref: TXN${(1000000 + Random().nextInt(9000000))}", color = TextMuted, fontSize = 8.sp, fontFamily = FontFamily.Monospace)
+    if (showTextDialog) {
+        androidx.compose.ui.window.Dialog(onDismissRequest = { showTextDialog = false }) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth(0.95f)
+                    .wrapContentHeight(),
+                shape = RoundedCornerShape(16.dp),
+                color = DarkSurface
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Evidence Message (${item.notificationNumber})",
+                            color = TextPrimary,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        IconButton(
+                            onClick = { showTextDialog = false },
+                            modifier = Modifier
+                                .size(28.dp)
+                                .clip(CircleShape)
+                                .background(DarkSurfaceVariant)
+                        ) {
+                            Text("✕", color = TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                    androidx.compose.foundation.text.selection.SelectionContainer {
+                        Text(
+                            text = item.textContent ?: "No message available.",
+                            color = TextPrimary,
+                            fontSize = 12.sp,
+                            fontFamily = FontFamily.Monospace,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(DarkBg)
+                                .padding(12.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Button(
+                        onClick = { showTextDialog = false },
+                        colors = ButtonDefaults.buttonColors(containerColor = OrangeAccent),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Close", color = Color(0xFF1A1200), fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
         }
     }
 }

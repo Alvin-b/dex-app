@@ -30,7 +30,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.data.Employee
+import androidx.compose.foundation.Image
+import androidx.compose.ui.res.painterResource
 import com.example.ui.DexcargoViewModel
 import com.example.ui.components.DexButton
 import com.example.ui.components.DexTextField

@@ -191,23 +191,25 @@ class AdminRepository(private val database: AppDatabase) {
             val activeApiKey = SupabaseClient.API_KEY
 
             var deletedViaBackend = false
-            try {
-                val deleteReq = DeleteUserAdminRequest(employeeId = targetEmpId)
-                val deleteResp = SupabaseClient.backendApi.deleteUserAdminEndpoint(
-                    authHeader = bearerHeader,
-                    body = deleteReq
-                )
+            if (!SupabaseClient.accessToken.isNullOrBlank()) {
+                try {
+                    val deleteReq = DeleteUserAdminRequest(employeeId = targetEmpId)
+                    val deleteResp = SupabaseClient.backendApi.deleteUserAdminEndpoint(
+                        authHeader = bearerHeader,
+                        body = deleteReq
+                    )
 
-                if (deleteResp.isSuccessful) {
-                    deletedViaBackend = true
-                    Log.d("AdminRepository", "Backend deleteUserAdminEndpoint succeeded (HTTP ${deleteResp.code()})")
-                } else {
-                    val errStr = try { deleteResp.errorBody()?.string() } catch (e: Exception) { null }
-                    val message = errStr ?: deleteResp.message().ifBlank { null } ?: "HTTP ${deleteResp.code()}"
-                    Log.w("AdminRepository", "Backend deleteUserAdminEndpoint note: $message. Executing direct fallback deletion.")
+                    if (deleteResp.isSuccessful) {
+                        deletedViaBackend = true
+                        Log.d("AdminRepository", "Backend deleteUserAdminEndpoint succeeded (HTTP ${deleteResp.code()})")
+                    } else {
+                        val errStr = try { deleteResp.errorBody()?.string() } catch (e: Exception) { null }
+                        val message = errStr ?: deleteResp.message().ifBlank { null } ?: "HTTP ${deleteResp.code()}"
+                        Log.w("AdminRepository", "Backend deleteUserAdminEndpoint note: $message. Executing direct fallback deletion.")
+                    }
+                } catch (e: Exception) {
+                    Log.w("AdminRepository", "backendApi deleteUserAdminEndpoint exception: ${e.message}. Executing fallback.")
                 }
-            } catch (e: Exception) {
-                Log.w("AdminRepository", "backendApi deleteUserAdminEndpoint exception: ${e.message}. Executing fallback.")
             }
 
             if (!deletedViaBackend) {

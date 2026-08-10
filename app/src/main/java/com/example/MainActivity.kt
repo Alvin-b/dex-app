@@ -369,6 +369,24 @@ class MainActivity : FragmentActivity() {
                 return
             }
 
+            if (requestCode == 108) {
+                val uri = data?.data
+                if (uri != null) {
+                    try {
+                        val inputStream = contentResolver.openInputStream(uri)
+                        val bitmap = android.graphics.BitmapFactory.decodeStream(inputStream)
+                        if (bitmap != null) {
+                            viewModel.onEvidencePhotoCaptured(bitmap)
+                        } else {
+                            android.widget.Toast.makeText(this, "Could not load evidence image", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    } catch (e: Exception) {
+                        android.widget.Toast.makeText(this, "Error loading image", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                }
+                return
+            }
+
             if (requestCode == 109) {
                 val uri = data?.data
                 if (uri != null) {

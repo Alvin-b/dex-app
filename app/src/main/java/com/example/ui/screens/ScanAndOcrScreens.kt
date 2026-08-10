@@ -906,7 +906,7 @@ fun TakePackagePhotoScreen(viewModel: DexcargoViewModel) {
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 DexButton(
-                    text = if (isCaptured) "📷 Retake Camera Photo" else "📷 Open Camera",
+                    text = if (isCaptured) "📷 Retake Photo" else "📷 Open Camera",
                     onClick = {
                         viewModel.isPackagePhotoCaptured.value = false
                         viewModel.capturedPackageBitmap.value = null
@@ -930,7 +930,18 @@ fun TakePackagePhotoScreen(viewModel: DexcargoViewModel) {
                 )
             }
 
-            Spacer(modifier = Modifier.height(6.dp))
+            DexButton(
+                text = "📦 Attach Sample Package Photo",
+                onClick = {
+                    val simBmp = com.example.ui.components.generateLocalSimulatedPackageBitmap(revId.ifBlank { "DEX-" + System.currentTimeMillis().toString().takeLast(6) })
+                    viewModel.onPackagePhotoCaptured(simBmp)
+                },
+                style = DarkSurfaceVariant,
+                textColor = OrangeAccent,
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            Spacer(modifier = Modifier.height(4.dp))
 
             DexButton(
                 text = "Register Package to Hub",

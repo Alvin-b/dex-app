@@ -240,6 +240,26 @@ data class PaymentNotificationApi(
     @Json(name = "result_desc") val resultDesc: String? = null
 )
 
+data class PaymentEvidenceApi(
+    @Json(name = "id") val id: String,
+    @Json(name = "notification_number") val notificationNumber: String? = null,
+    @Json(name = "evidence_type") val evidenceType: String? = null,
+    @Json(name = "image_url") val imageUrl: String? = null,
+    @Json(name = "evidence_url") val evidenceUrl: String? = null,
+    @Json(name = "text_content") val textContent: String? = null,
+    @Json(name = "amount") val amount: Double? = null,
+    @Json(name = "sender_phone") val senderPhone: String? = null,
+    @Json(name = "mpesa_receipt") val mpesaReceipt: String? = null,
+    @Json(name = "status") val status: String? = null,
+    @Json(name = "uploaded_by") val uploadedBy: String? = null,
+    @Json(name = "uploaded_at") val uploadedAt: String? = null
+)
+
+data class PaymentEvidenceResponse(
+    @Json(name = "evidence") val evidence: List<PaymentEvidenceApi> = emptyList(),
+    @Json(name = "count") val count: Int? = null
+)
+
 data class PaymentAllocationApi(
     @Json(name = "id") val id: String,
     @Json(name = "payment_notification_id") val paymentNotificationId: String,
@@ -837,12 +857,19 @@ interface SupabaseApi {
         @Body photoBytes: RequestBody
     ): Response<Unit>
 
-    @GET("storage/v1/object/package-photos/{packageId}/{filename}")
+    @GET("storage/v1/object/authenticated/package-photos/{packageId}/{filename}")
     suspend fun downloadPackagePhoto(
         @Header("apikey") apiKey: String,
         @Header("Authorization") authHeader: String,
         @Path("packageId") packageId: String,
         @Path("filename") filename: String
+    ): okhttp3.ResponseBody
+
+    @GET("storage/v1/object/{objectPath}")
+    suspend fun downloadStorageObject(
+        @Header("apikey") apiKey: String,
+        @Header("Authorization") authHeader: String,
+        @Path(value = "objectPath", encoded = true) objectPath: String
     ): okhttp3.ResponseBody
 
     @GET("rest/v1/commissions")
@@ -853,6 +880,14 @@ interface SupabaseApi {
         @Query("status") statusFilter: String? = null,
         @Query("order") order: String = "created_at.desc"
     ): List<CommissionApi>
+
+    @POST("rest/v1/commissions")
+    suspend fun insertCommission(
+        @Header("apikey") apiKey: String,
+        @Header("Authorization") authHeader: String,
+        @Header("Prefer") prefer: String = "return=representation",
+        @Body body: CommissionApi
+    ): Response<List<CommissionApi>>
 
     @POST("rest/v1/rpc/approve_commission")
     suspend fun approveCommission(
@@ -1167,6 +1202,20 @@ fun PaymentNotificationApi.toEntity(): PaymentNotification = PaymentNotification
     amount = amount,
     senderPhone = senderPhone,
     timestamp = timestamp
+)
+
+fun PaymentEvidenceApi.toEntity(): PaymentNotification = PaymentNotification(
+    id = id,
+    notificationNumber = notificationNumber ?: id,
+    evidenceType = evidenceType ?: if (!evidenceUrl.isNullOrBlank() || !imageUrl.isNullOrBlank()) "IMAGE" else "TEXT",
+    imageUrl = if (!evidenceUrl.isNullOrBlank()) evidenceUrl else imageUrl,
+    textContent = textContent,
+    uploadedBy = uploadedBy ?: "DEX Admin",
+    uploadedAt = uploadedAt ?: "",
+    status = status ?: "PENDING",
+    amount = amount?.toInt(),
+    senderPhone = senderPhone,
+    timestamp = uploadedAt
 )
 
 fun PaymentAllocation.toApi(): PaymentAllocationApi = PaymentAllocationApi(

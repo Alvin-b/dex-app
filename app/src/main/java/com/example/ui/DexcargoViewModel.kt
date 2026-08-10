@@ -179,10 +179,18 @@ class DexcargoViewModel(
                     var finalPhotoUrl = photoUrl
                     if (!photoUrl.isNullOrEmpty() && !photoUrl.startsWith("package-photos/")) {
                         try {
-                            val decodedBytes = android.util.Base64.decode(pkg.packagePhotoUrl, android.util.Base64.DEFAULT)
-                            val uploadedUrl = repository.uploadPhoto(pkg.id, "photo.jpg", decodedBytes, true)
-                            if (uploadedUrl != null) {
-                                finalPhotoUrl = uploadedUrl
+                            val cleanPhoto = photoUrl
+                                .removePrefix("base64:")
+                                .substringAfter("base64,")
+                                .substringAfter("data:image/jpeg;base64,")
+                                .substringAfter("data:image/png;base64,")
+                                .trim()
+                            if (cleanPhoto.isNotEmpty()) {
+                                val decodedBytes = android.util.Base64.decode(cleanPhoto, android.util.Base64.DEFAULT)
+                                val uploadedUrl = repository.uploadPhoto(pkg.id, "photo.jpg", decodedBytes, true)
+                                if (uploadedUrl != null) {
+                                    finalPhotoUrl = uploadedUrl
+                                }
                             }
                         } catch (e: Exception) {
                             e.printStackTrace()
@@ -700,28 +708,14 @@ class DexcargoViewModel(
         }
 
         viewModelScope.launch {
-            var finalPhotoUrl = capturedPhotoUrl.value
             val bitmap = capturedPackageBitmap.value
-            if (bitmap != null) {
-                if (online) {
-                    try {
-                        val outputStream = java.io.ByteArrayOutputStream()
-                        bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, outputStream)
-                        val bytes = outputStream.toByteArray()
-                        val uploadedUrl = repository.uploadPhoto(revId.value, "photo.jpg", bytes, true)
-                        if (uploadedUrl != null) {
-                            finalPhotoUrl = uploadedUrl
-                        } else {
-                            finalPhotoUrl = "base64:" + encodeBitmapToBase64(bitmap)
-                        }
-                    } catch (e: Exception) {
-                        e.printStackTrace()
-                        finalPhotoUrl = "base64:" + encodeBitmapToBase64(bitmap)
-                    }
-                } else {
-                    finalPhotoUrl = "base64:" + encodeBitmapToBase64(bitmap)
-                }
+            val localPhotoUrl = if (bitmap != null) {
+                "base64:" + encodeBitmapToBase64(bitmap)
+            } else {
+                capturedPhotoUrl.value
             }
+
+            var finalRemotePhotoUrl = localPhotoUrl
 
             val baseDesc = revDesc.value.ifBlank { "General Goods" }
             val finalDescription = if (revCbm.value.isNotBlank()) {
@@ -742,13 +736,34 @@ class DexcargoViewModel(
                 salesRep = revSalesRep.value.ifBlank { getDefaultSalesRep() },
                 status = "registered",
                 registeredAt = getNowTimestamp(),
-                packagePhotoUrl = finalPhotoUrl,
+                packagePhotoUrl = localPhotoUrl,
                 packagePhotoCapturedAt = getNowTimestamp(),
                 packagePhotoCapturedBy = "$actor (${currentEmployee.value?.name ?: "Agent"})",
                 syncPending = !online
             )
 
-            repository.insertPackage(pkg, online = online)
+            // 1. Immediately save package locally with base64 so UI thumbnail shows image with 0 delay
+            repository.insertPackage(pkg, online = false)
+
+            // 2. Asynchronously upload to backend if online
+            if (online && bitmap != null) {
+                try {
+                    val outputStream = java.io.ByteArrayOutputStream()
+                    bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, outputStream)
+                    val bytes = outputStream.toByteArray()
+                    val uploadedUrl = repository.uploadPhoto(revId.value, "photo.jpg", bytes, true)
+                    if (uploadedUrl != null) {
+                        finalRemotePhotoUrl = uploadedUrl
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+
+            if (online) {
+                val cloudPkg = pkg.copy(packagePhotoUrl = finalRemotePhotoUrl, syncPending = false)
+                repository.insertPackage(cloudPkg, online = true)
+            }
             repository.insertLog(
                 AuditLog(
                     id = "AL-" + System.currentTimeMillis(),
@@ -1180,7 +1195,7 @@ class DexcargoViewModel(
                 "sm" -> 0.08
                 else -> 0.10
             }
-            for (pkg in myPackages.filter { it.status == "collected" || it.status == "paid" }) {
+            for (pkg in myPackages.filter { it.status == "collected" || it.status == "paid" || it.status == "cleared" }) {
                 val ym = parseYearMonth(pkg.paidAt ?: pkg.registeredAt)
                 if (ym != null) {
                     val amt = pkg.cost * rate
@@ -1370,6 +1385,7 @@ class DexcargoViewModel(
             val notif = notificationsList.find { it.id == notifId } ?: return@launch
 
             val nowTs = getNowTimestamp()
+            val allEmps = employees.value
 
             selectedLinkOrders.forEach { linkPkg ->
                 val allocId = "PA-" + System.currentTimeMillis() + "-" + Random().nextInt(100)
@@ -1384,16 +1400,60 @@ class DexcargoViewModel(
                 )
                 repository.insertAllocation(alloc, online = isOnline.value)
 
-                // Update package to cleared/paid status
+                // Update package to paid/cleared status and stamp payment details
                 val originalPkg = repository.getPackageById(linkPkg.id) ?: linkPkg
                 val updated = originalPkg.copy(
-                    status = "cleared",
+                    status = "paid",
                     paidAt = if (originalPkg.paidAt.isNullOrBlank()) nowTs else originalPkg.paidAt,
-                    collectedAt = if (originalPkg.collectedAt.isNullOrBlank()) nowTs else originalPkg.collectedAt,
-                    paymentMethod = "Linked Reference",
+                    paymentMethod = "Linked Evidence (${notif.notificationNumber})",
                     paymentRef = notif.notificationNumber
                 )
                 repository.insertPackage(updated, online = isOnline.value)
+
+                // Extract employee tied to package & award commission
+                val salesRepStr = linkPkg.salesRep
+                var targetEmpId = allEmps.find { emp ->
+                    salesRepStr.contains(emp.id, ignoreCase = true) ||
+                    (emp.name.isNotBlank() && salesRepStr.contains(emp.name, ignoreCase = true)) ||
+                    (emp.email.isNotBlank() && salesRepStr.contains(emp.email.substringBefore("@"), ignoreCase = true))
+                }?.id
+
+                if (targetEmpId.isNullOrBlank()) {
+                    val match = Regex("(ADM|SR|SM|LM|EMP)-[0-9]+", RegexOption.IGNORE_CASE).find(salesRepStr)
+                    targetEmpId = match?.value?.uppercase() ?: currentEmployee.value?.id ?: "EMP-001"
+                }
+
+                val emp = allEmps.find { it.id == targetEmpId }
+                val empRole = emp?.role?.lowercase() ?: "sr"
+                val rate = when (empRole) {
+                    "sr", "sales_rep" -> 0.05
+                    "sm", "sales_manager" -> 0.02
+                    "lm", "logistics_manager" -> 0.015
+                    else -> 0.05
+                }
+                val commAmount = linkPkg.cost * rate
+                val commId = "COMM-" + System.currentTimeMillis() + "-" + Random().nextInt(1000)
+                val newComm = com.example.data.api.CommissionApi(
+                    id = commId,
+                    orderId = linkPkg.id,
+                    employeeId = targetEmpId,
+                    commissionType = "payment_linked",
+                    grossProfit = linkPkg.cost.toDouble(),
+                    rate = rate,
+                    amount = commAmount,
+                    status = "approved",
+                    createdAt = nowTs
+                )
+
+                try {
+                    repository.insertCommissionOnBackend(newComm)
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+
+                val currentCommList = backendCommissions.value.toMutableList()
+                currentCommList.add(0, newComm)
+                backendCommissions.value = currentCommList
 
                 repository.insertLog(
                     AuditLog(
@@ -1401,7 +1461,7 @@ class DexcargoViewModel(
                         action = "LINK_PAYMENT_EVIDENCE",
                         actor = "$actor (${currentEmployee.value?.name})",
                         timestamp = nowTs,
-                        details = "Linked PAY-Evidence ${notif.notificationNumber} to ${linkPkg.id}"
+                        details = "Linked PAY-Evidence ${notif.notificationNumber} to ${linkPkg.id} (Commission KES ${commAmount.toInt()} awarded to $targetEmpId)"
                     ),
                     online = isOnline.value
                 )
