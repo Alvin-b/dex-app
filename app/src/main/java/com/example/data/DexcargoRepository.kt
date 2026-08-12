@@ -1059,4 +1059,40 @@ class DexcargoRepository(private val database: AppDatabase) {
         )
         database.broadcastMessageDao().insertMessages(defaultBroadcasts)
     }
+
+    suspend fun linkPaymentBackend(notificationId: String, allocations: List<AllocationPayload>): Boolean {
+        return try {
+            val authHeader = SupabaseClient.getBearerHeader()
+            if (authHeader.isBlank()) return false
+            val req = LinkPaymentRequest(notificationId, allocations)
+            val res = SupabaseClient.backendApi.linkPayment(authHeader = authHeader, req = req)
+            if (res.isSuccessful && res.body()?.ok == true) {
+                Log.i("DexcargoRepo", "linkPayment backend succeeded: allocated ${res.body()?.allocatedTotal}")
+                true
+            } else {
+                Log.e("DexcargoRepo", "linkPayment backend failed: ${res.code()} ${res.errorBody()?.string()}")
+                false
+            }
+        } catch (e: Exception) {
+            Log.e("DexcargoRepo", "linkPayment error", e)
+            false
+        }
+    }
+
+    suspend fun fetchRevenueSummary(): RevenueSummaryResponse? {
+        return try {
+            val authHeader = SupabaseClient.getBearerHeader()
+            if (authHeader.isBlank()) return null
+            val res = SupabaseClient.backendApi.revenueSummary(authHeader = authHeader)
+            if (res.isSuccessful) {
+                res.body()
+            } else {
+                Log.e("DexcargoRepo", "fetchRevenueSummary failed: ${res.code()}")
+                null
+            }
+        } catch (e: Exception) {
+            Log.e("DexcargoRepo", "fetchRevenueSummary error", e)
+            null
+        }
+    }
 }

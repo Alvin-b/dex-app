@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -703,6 +704,11 @@ fun AdminHomeScreen(viewModel: DexcargoViewModel) {
     val alerts by viewModel.broadcastMessages.collectAsState()
     val backendCommissions by viewModel.backendCommissions.collectAsState()
     val updateAvailable by viewModel.hasUpdate.collectAsState()
+    val revSummary by viewModel.revenueSummary.collectAsState()
+
+    LaunchedEffect(Unit) {
+        viewModel.fetchRevenueSummary()
+    }
 
     var showNotificationsDialog by remember { mutableStateOf(false) }
     var employeeToDelete by remember { mutableStateOf<Employee?>(null) }
@@ -773,6 +779,17 @@ fun AdminHomeScreen(viewModel: DexcargoViewModel) {
     val seaPackagesCount = packages.count { it.mode == "Sea Freight" }
     val collectedCount = packages.count { it.status == "collected" || it.status == "cleared" || it.status == "paid" }
 
+    val displayGrossTotal = revSummary?.getGrossIncomeValue()?.toInt() ?: totalRevenue
+    val displayThisMonth = revSummary?.revenue?.thisMonth?.toInt() ?: totalRevenue
+    val displayToday = revSummary?.revenue?.today?.toInt() ?: 0
+    val displayNetRetained = revSummary?.netRetained?.toInt() ?: netCompanyRevenue
+    val displayUnpaidVal = revSummary?.getPendingReleaseValue()?.toInt() ?: totalOutstanding
+    val displayUnpaidPkgs = revSummary?.getPendingReleaseCount() ?: unpaidPackages.size
+    val displayPaidPkgs = revSummary?.packages?.paid ?: paidPackages.size
+    val displayTotalPkgs = revSummary?.packages?.total ?: totalManaged
+    val displayAccruedComm = revSummary?.commissions?.accrued?.toInt() ?: grossPaidComm
+    val displayPaidComm = revSummary?.commissions?.paidOut?.toInt() ?: 0
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -796,15 +813,111 @@ fun AdminHomeScreen(viewModel: DexcargoViewModel) {
 
         item {
             CommissionHeroCard(
-                label = "Company Total Revenue (Gross Cleared)",
-                amount = "KES ${totalRevenue.toLocaleString()}",
-                indicator = "Net Treasury: KES ${netCompanyRevenue.toInt().toLocaleString()} | ${paidPackages.size} Paid Cargoes",
+                label = "Company Gross Income (Released Packages)",
+                amount = "KES ${displayGrossTotal.toLocaleString()}",
+                indicator = "This Month: KES ${displayThisMonth.toLocaleString()} | Today: KES ${displayToday.toLocaleString()}",
                 indicatorColor = GreenAccent,
                 icon = "🏦",
                 gradientBg = Brush.linearGradient(
                     colors = listOf(GreenAccentBg, Color(0x0510B981), DarkSurface)
                 )
             )
+        }
+
+        item {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = DarkSurface),
+                border = BorderStroke(1.dp, DarkBorder)
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Company Revenue & Money Position",
+                            color = Color.White,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Surface(
+                            color = GreenAccentBg,
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text(
+                                text = "COMPANY TOTAL",
+                                color = GreenAccent,
+                                fontSize = 9.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .background(DarkSurfaceVariant, RoundedCornerShape(10.dp))
+                                .padding(10.dp)
+                        ) {
+                            Text("Net Retained", color = TextSecondary, fontSize = 10.5.sp)
+                            Text("KES ${displayNetRetained.toLocaleString()}", color = GreenAccent, fontSize = 14.5.sp, fontWeight = FontWeight.Bold)
+                            Text("After commissions", color = TextSecondary, fontSize = 9.sp)
+                        }
+
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .background(DarkSurfaceVariant, RoundedCornerShape(10.dp))
+                                .padding(10.dp)
+                        ) {
+                            Text("Pending Release Value", color = TextSecondary, fontSize = 10.5.sp)
+                            Text("KES ${displayUnpaidVal.toLocaleString()}", color = OrangeAccent, fontSize = 14.5.sp, fontWeight = FontWeight.Bold)
+                            Text("$displayUnpaidPkgs unreleased package(s)", color = TextSecondary, fontSize = 9.sp)
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .background(DarkSurfaceVariant, RoundedCornerShape(10.dp))
+                                .padding(10.dp)
+                        ) {
+                            Text("Commissions Accrued", color = TextSecondary, fontSize = 10.5.sp)
+                            Text("KES ${displayAccruedComm.toLocaleString()}", color = PurpleAccent, fontSize = 14.5.sp, fontWeight = FontWeight.Bold)
+                            Text("Paid out: KES ${displayPaidComm.toLocaleString()}", color = TextSecondary, fontSize = 9.sp)
+                        }
+
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .background(DarkSurfaceVariant, RoundedCornerShape(10.dp))
+                                .padding(10.dp)
+                        ) {
+                            Text("Cargo Money Position", color = TextSecondary, fontSize = 10.5.sp)
+                            Text("$displayPaidPkgs / $displayTotalPkgs Paid", color = BlueAccent, fontSize = 14.5.sp, fontWeight = FontWeight.Bold)
+                            Text("Total managed cargoes", color = TextSecondary, fontSize = 9.sp)
+                        }
+                    }
+                }
+            }
         }
 
         item {

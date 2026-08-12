@@ -2,6 +2,8 @@ package com.example.ui.screens
 
 import android.widget.Toast
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.foundation.BorderStroke
@@ -872,14 +874,16 @@ fun PaymentEvidenceDisplay(
                 Text(
                     text = item.textContent ?: "No text content available.",
                     color = TextPrimary,
-                    fontSize = 11.sp,
+                    fontSize = 11.5.sp,
                     fontFamily = FontFamily.Monospace,
                     modifier = Modifier
                         .fillMaxWidth()
+                        .heightIn(max = 200.dp)
                         .clip(RoundedCornerShape(8.dp))
                         .background(DarkBg)
                         .border(1.dp, DarkBorder, RoundedCornerShape(8.dp))
-                        .padding(8.dp)
+                        .padding(10.dp)
+                        .verticalScroll(rememberScrollState())
                 )
             }
             Spacer(modifier = Modifier.height(6.dp))
@@ -947,8 +951,10 @@ fun PaymentEvidenceDisplay(
                                 fontFamily = FontFamily.Monospace,
                                 modifier = Modifier
                                     .fillMaxWidth()
+                                    .heightIn(max = 160.dp)
                                     .background(DarkBg)
                                     .padding(8.dp)
+                                    .verticalScroll(rememberScrollState())
                             )
                         }
                     }
@@ -1008,8 +1014,10 @@ fun PaymentEvidenceDisplay(
                             fontFamily = FontFamily.Monospace,
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .heightIn(max = 280.dp)
                                 .background(DarkBg)
                                 .padding(12.dp)
+                                .verticalScroll(rememberScrollState())
                         )
                     }
                     Spacer(modifier = Modifier.height(16.dp))

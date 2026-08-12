@@ -428,6 +428,18 @@ fun generateLocalSimulatedPackageBitmap(id: String): android.graphics.Bitmap {
     return bitmap
 }
 
+object ImageCacheManager {
+    private val memoryCache = java.util.concurrent.ConcurrentHashMap<String, ByteArray>()
+
+    fun get(key: String): ByteArray? {
+        return memoryCache[key]
+    }
+
+    fun put(key: String, bytes: ByteArray) {
+        memoryCache[key] = bytes
+    }
+}
+
 @Composable
 fun StorageImage(
     storagePathOrUrl: String?,
@@ -436,27 +448,47 @@ fun StorageImage(
     modifier: Modifier = Modifier,
     contentScale: ContentScale = ContentScale.Crop
 ) {
-    var bytes by remember(storagePathOrUrl) {
-        mutableStateOf<ByteArray?>(null)
+    val cleanKey = storagePathOrUrl?.trim()
+    val initialBytes = remember(cleanKey) {
+        if (!cleanKey.isNullOrBlank()) ImageCacheManager.get(cleanKey) else null
     }
-    var loading by remember(storagePathOrUrl) {
-        mutableStateOf(!storagePathOrUrl.isNullOrBlank())
+
+    var bytes by remember(cleanKey) {
+        mutableStateOf<ByteArray?>(initialBytes)
     }
-    var failed by remember(storagePathOrUrl) {
+    var loading by remember(cleanKey) {
+        mutableStateOf(initialBytes == null && !cleanKey.isNullOrBlank())
+    }
+    var failed by remember(cleanKey) {
         mutableStateOf(false)
     }
 
-    LaunchedEffect(storagePathOrUrl) {
-        loading = !storagePathOrUrl.isNullOrBlank()
-        failed = false
-        bytes = null
-
-        if (!storagePathOrUrl.isNullOrBlank()) {
-            bytes = loadImage(storagePathOrUrl)
-            failed = bytes == null
+    LaunchedEffect(cleanKey) {
+        if (cleanKey.isNullOrBlank()) {
+            bytes = null
+            loading = false
+            failed = false
+            return@LaunchedEffect
         }
 
-        loading = false
+        val cached = ImageCacheManager.get(cleanKey)
+        if (cached != null) {
+            bytes = cached
+            loading = false
+            failed = false
+        } else {
+            loading = true
+            failed = false
+            val downloaded = loadImage(cleanKey)
+            if (downloaded != null) {
+                ImageCacheManager.put(cleanKey, downloaded)
+                bytes = downloaded
+                failed = false
+            } else {
+                failed = true
+            }
+            loading = false
+        }
     }
 
     val bitmap = remember(bytes) {

@@ -342,6 +342,74 @@ data class StkPushResponse(
     @Json(name = "error") val error: String? = null
 )
 
+data class LinkPaymentRequest(
+    @Json(name = "payment_notification_id") val paymentNotificationId: String,
+    @Json(name = "allocations") val allocations: List<AllocationPayload>
+)
+
+data class AllocationPayload(
+    @Json(name = "package_id") val packageId: String,
+    @Json(name = "amount") val amount: Double? = null
+)
+
+data class LinkPaymentResponse(
+    @Json(name = "ok") val ok: Boolean = false,
+    @Json(name = "payment_notification_id") val paymentNotificationId: String? = null,
+    @Json(name = "allocated_total") val allocatedTotal: Double? = null,
+    @Json(name = "packages") val packages: List<Map<String, Any?>>? = null,
+    @Json(name = "error") val error: String? = null
+)
+
+data class PendingReleaseDetails(
+    @Json(name = "value") val value: Double = 0.0,
+    @Json(name = "count") val count: Int = 0
+)
+
+data class RevenueSummaryResponse(
+    @Json(name = "currency") val currency: String? = "KES",
+    @Json(name = "revenue") val revenue: RevenueDetails? = null,
+    @Json(name = "packages") val packages: PackageDetails? = null,
+    @Json(name = "commissions") val commissions: CommissionDetails? = null,
+    @Json(name = "net_retained") val netRetained: Double? = 0.0,
+    @Json(name = "gross_income") val grossIncome: Double? = null,
+    @Json(name = "pending_release") val pendingRelease: PendingReleaseDetails? = null,
+    @Json(name = "error") val error: String? = null
+) {
+    fun getGrossIncomeValue(): Double {
+        return grossIncome ?: revenue?.grossIncome ?: revenue?.total ?: 0.0
+    }
+
+    fun getPendingReleaseValue(): Double {
+        return pendingRelease?.value ?: packages?.pendingReleaseValue ?: packages?.outstandingValue ?: 0.0
+    }
+
+    fun getPendingReleaseCount(): Int {
+        return pendingRelease?.count ?: packages?.pendingReleaseCount ?: packages?.unpaid ?: 0
+    }
+}
+
+data class RevenueDetails(
+    @Json(name = "total") val total: Double = 0.0,
+    @Json(name = "today") val today: Double = 0.0,
+    @Json(name = "this_month") val thisMonth: Double = 0.0,
+    @Json(name = "gross_income") val grossIncome: Double? = null
+)
+
+data class PackageDetails(
+    @Json(name = "total") val total: Int = 0,
+    @Json(name = "paid") val paid: Int = 0,
+    @Json(name = "unpaid") val unpaid: Int = 0,
+    @Json(name = "outstanding_value") val outstandingValue: Double = 0.0,
+    @Json(name = "pending_release_value") val pendingReleaseValue: Double? = null,
+    @Json(name = "pending_release_count") val pendingReleaseCount: Int? = null
+)
+
+data class CommissionDetails(
+    @Json(name = "accrued") val accrued: Double = 0.0,
+    @Json(name = "paid_out") val paidOut: Double = 0.0,
+    @Json(name = "outstanding") val outstanding: Double = 0.0
+)
+
 interface MpesaApi {
     @GET("api/public/admin/employees")
     suspend fun getAdminEmployees(
@@ -394,6 +462,19 @@ interface MpesaApi {
         @Header("Authorization") authHeader: String,
         @Body req: StkPushRequest
     ): Response<StkPushResponse>
+
+    @POST("api/public/link-payment")
+    suspend fun linkPayment(
+        @Header("apikey") apiKey: String = SupabaseClient.API_KEY,
+        @Header("Authorization") authHeader: String,
+        @Body req: LinkPaymentRequest
+    ): Response<LinkPaymentResponse>
+
+    @GET("api/public/revenue-summary")
+    suspend fun revenueSummary(
+        @Header("apikey") apiKey: String = SupabaseClient.API_KEY,
+        @Header("Authorization") authHeader: String
+    ): Response<RevenueSummaryResponse>
 }
 
 // --- RETROFIT INTERFACE ---

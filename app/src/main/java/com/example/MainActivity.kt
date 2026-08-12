@@ -74,30 +74,36 @@ class MainActivity : FragmentActivity() {
         viewModel = ViewModelProvider(this, viewModelFactory)[DexcargoViewModel::class.java]
 
         // Register automatic network observer
-        val connectivityManager = getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
-        val activeNetwork = connectivityManager.activeNetworkInfo
-        val isInitiallyConnected = activeNetwork != null && activeNetwork.isConnected
-        viewModel.isOnline.value = isInitiallyConnected
+        try {
+            val connectivityManager = getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+            @Suppress("DEPRECATION")
+            val activeNetwork = connectivityManager.activeNetworkInfo
+            val isInitiallyConnected = activeNetwork != null && activeNetwork.isConnected
+            viewModel.isOnline.value = isInitiallyConnected
 
-        val networkCallback = object : android.net.ConnectivityManager.NetworkCallback() {
-            override fun onAvailable(network: android.net.Network) {
-                super.onAvailable(network)
-                lifecycleScope.launch {
-                    viewModel.setOnlineStatus(true)
+            val networkCallback = object : android.net.ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: android.net.Network) {
+                    super.onAvailable(network)
+                    lifecycleScope.launch {
+                        viewModel.setOnlineStatus(true)
+                    }
+                }
+
+                override fun onLost(network: android.net.Network) {
+                    super.onLost(network)
+                    lifecycleScope.launch {
+                        viewModel.setOnlineStatus(false)
+                    }
                 }
             }
-
-            override fun onLost(network: android.net.Network) {
-                super.onLost(network)
-                lifecycleScope.launch {
-                    viewModel.setOnlineStatus(false)
-                }
-            }
+            val networkRequest = android.net.NetworkRequest.Builder()
+                .addCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                .build()
+            connectivityManager.registerNetworkCallback(networkRequest, networkCallback)
+        } catch (e: Throwable) {
+            android.util.Log.w("MainActivity", "Network callback setup note: ${e.message}")
+            viewModel.isOnline.value = true
         }
-        val networkRequest = android.net.NetworkRequest.Builder()
-            .addCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
-            .build()
-        connectivityManager.registerNetworkCallback(networkRequest, networkCallback)
 
         // Subscribe to camera trigger events
         lifecycleScope.launch {
